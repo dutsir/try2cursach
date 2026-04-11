@@ -237,18 +237,23 @@ class DNSParser:
                 options.add_argument(f'--proxy-server={proxy_addr}')
                 logger.info('Используется прокси (без auth): %s', self.proxy)
 
+        use_xvfb = self.headless and os.environ.get('DISPLAY')
+        use_headless = self.headless and not use_xvfb
+
         ver_main = _chrome_major_version()
-        uc_kwargs: dict[str, Any] = {'options': options, 'headless': self.headless}
+        uc_kwargs: dict[str, Any] = {'options': options, 'headless': use_headless}
         if ver_main is not None:
             uc_kwargs['version_main'] = ver_main
-            logger.info('undetected_chromedriver version_main=%s (под установленный Chrome)', ver_main)
-        if self.headless:
+            logger.info('undetected_chromedriver version_main=%s', ver_main)
+        if use_xvfb:
+            logger.info(
+                'Xvfb-режим: Chrome запущен как обычный браузер на виртуальном дисплее %s',
+                os.environ['DISPLAY'],
+            )
+        elif use_headless:
             options.add_argument('--disable-gpu')
             options.add_argument('--disable-software-rasterizer')
-            logger.info(
-                'Headless: при 403 сначала CHROME_HEADLESS=0; если окно Chrome уже есть и снова 403 — '
-                'блокировка по сети/IP, см. PROXY_LIST или другую сеть.'
-            )
+            logger.info('Headless-режим (без Xvfb)')
 
         driver = self._uc.Chrome(**uc_kwargs)
         to = float(self.page_load_timeout)
