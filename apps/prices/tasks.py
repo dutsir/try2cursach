@@ -1,14 +1,78 @@
 import logging
+import time
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
-from celery import shared_task
+from celery import chain, shared_task
+from django.conf import settings
 from django.utils import timezone
 
 from apps.products.models import Category, Product
 from apps.products.services import get_or_create_product
 
 logger = logging.getLogger(__name__)
+
+
+def parse_category_with_parser(
+    category: Category,
+    parser: Any,
+    *,
+    sync: bool = False,
+) -> dict:
+    """
+    Один проход по каталогу DNS и сохранение цен.
+
+    sync=True  — цены сохраняются прямо здесь (не нужен Celery worker).
+    sync=False — task_save_price уходит в очередь Celery (.delay()).
+
+    Если парсер нашёл карточки, но не смог извлечь ни одного товара
+    (признак антибот-троттлинга), браузер перезапускается и делается
+    одна повторная попытка.
+    """
+    logger.info('Начинаем парсинг категории: %s', category.name)
+
+    parsed_products = parser.parse_category(category.dns_category_slug)
+
+    if not parsed_products:
+        logger.warning('Парсер не вернул товаров для категории %s', category.slug)
+        if sync:
+            logger.info(
+                'Повтор категории %s с новым браузером (возможен антибот-троттлинг)…',
+                category.slug,
+            )
+            parser.close()
+            time.sleep(8)
+            parsed_products = parser.parse_category(category.dns_category_slug)
+        if not parsed_products:
+            return {'status': 'empty', 'category': category.slug}
+
+    saved_count = 0
+    for item in parsed_products:
+        product, _ = get_or_create_product(
+            category=category,
+            name=item.name,
+            url=item.url,
+            vendor_code=item.vendor_code,
+            image_url=item.image_url,
+        )
+        price_kwargs = dict(
+            product_id=product.pk,
+            price=item.price,
+            old_price=item.old_price,
+            timestamp=timezone.now().isoformat(),
+        )
+        if sync:
+            task_save_price(**price_kwargs)
+        else:
+            task_save_price.delay(**price_kwargs)
+        saved_count += 1
+
+    logger.info(
+        'Категория %s: спарсено %d, сохранено/поставлено задач цен: %d',
+        category.slug, len(parsed_products), saved_count,
+    )
+    return {'status': 'ok', 'category': category.slug, 'parsed': len(parsed_products)}
 
 
 @shared_task(
@@ -28,37 +92,8 @@ def task_parse_category(self, category_id: int) -> dict:
         logger.warning('Категория id=%d не найдена или неактивна', category_id)
         return {'status': 'skipped', 'reason': 'category_not_found'}
 
-    logger.info('Начинаем парсинг категории: %s', category.name)
-
     with DNSParser() as parser:
-        parsed_products = parser.parse_category(category.dns_category_slug)
-
-    if not parsed_products:
-        logger.warning('Парсер не вернул товаров для категории %s', category.slug)
-        return {'status': 'empty', 'category': category.slug}
-
-    saved_count = 0
-    for item in parsed_products:
-        product, _ = get_or_create_product(
-            category=category,
-            name=item.name,
-            url=item.url,
-            vendor_code=item.vendor_code,
-            image_url=item.image_url,
-        )
-        task_save_price.delay(
-            product_id=product.pk,
-            price=item.price,
-            old_price=item.old_price,
-            timestamp=timezone.now().isoformat(),
-        )
-        saved_count += 1
-
-    logger.info(
-        'Категория %s: спарсено %d, поставлено задач сохранения цен: %d',
-        category.slug, len(parsed_products), saved_count,
-    )
-    return {'status': 'ok', 'category': category.slug, 'parsed': len(parsed_products)}
+        return parse_category_with_parser(category, parser)
 
 
 @shared_task(
@@ -121,11 +156,36 @@ def task_save_price(
 
 
 @shared_task
+def task_pause_between_dns_categories(seconds: int) -> None:
+    if seconds > 0:
+        time.sleep(seconds)
+
+
+@shared_task
 def task_parse_all_categories() -> dict:
-    categories = Category.objects.filter(is_active=True)
-    count = 0
-    for cat in categories:
-        task_parse_category.delay(cat.pk)
-        count += 1
-    logger.info('Поставлено задач парсинга для %d категорий', count)
-    return {'queued': count}
+    categories = list(Category.objects.filter(is_active=True).order_by('id'))
+    count = len(categories)
+    if count == 0:
+        return {'queued': 0}
+
+    pause = int(getattr(settings, 'CELERY_DNS_CATEGORY_PAUSE_SECONDS', 0) or 0)
+
+    if pause <= 0:
+        for cat in categories:
+            task_parse_category.delay(cat.pk)
+        logger.info('Поставлено задач парсинга для %d категорий (без пауз между ними)', count)
+        return {'queued': count, 'stagger': False}
+
+    links: list[Any] = []
+    for i, cat in enumerate(categories):
+        links.append(task_parse_category.si(cat.pk))
+        if i < count - 1:
+            links.append(task_pause_between_dns_categories.si(pause))
+
+    chain(*links).apply_async()
+    logger.info(
+        'Запущена цепочка парсинга %d категорий с паузой %d с между категориями',
+        count,
+        pause,
+    )
+    return {'queued': count, 'stagger': True, 'pause_seconds': pause}

@@ -15,11 +15,11 @@ from .models import Anomaly
 
 logger = logging.getLogger(__name__)
 
-SPIKE_THRESHOLD = 0.15
+SPIKE_THRESHOLD = 0.10
 MANIPULATION_RISE_THRESHOLD = 0.10
 CYCLIC_POWER_THRESHOLD = 0.3
-MIN_PRICES_FOR_ANALYSIS = 5
-MIN_PRICES_FOR_FFT = 8
+MIN_PRICES_FOR_ANALYSIS = 3
+MIN_PRICES_FOR_FFT = 6
 
 
 @dataclass
@@ -55,7 +55,7 @@ def detect_spike(prices: list[Decimal]) -> AnomalyResult | None:
             anomaly_type=Anomaly.AnomalyType.SPIKE,
             severity=severity,
             description=(
-                f'Резкий {direction} цены: {prev:.0f}₽ → {curr:.0f}₽ '
+                f'Резкий {direction} цены которые могут: {prev:.0f}₽ → {curr:.0f}₽ '
                 f'({change:.1%})'
             ),
         )

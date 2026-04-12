@@ -1,9 +1,12 @@
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(encoding='utf-8')
+
+os.environ.setdefault('PGCLIENTENCODING', 'UTF8')
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -73,6 +76,9 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD', 'pm_secret'),
         'HOST': os.getenv('DB_HOST', 'localhost'),
         'PORT': os.getenv('DB_PORT', '5432'),
+        'OPTIONS': {
+            'options': '-c client_encoding=UTF8',
+        },
     }
 }
 
@@ -114,16 +120,18 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
-CELERY_BROKER_URL = (
+_default_celery_broker = (
     f"amqp://{os.getenv('RABBITMQ_USER', 'guest')}:"
     f"{os.getenv('RABBITMQ_PASS', 'guest')}@"
     f"{os.getenv('RABBITMQ_HOST', 'localhost')}:"
     f"{os.getenv('RABBITMQ_PORT', '5672')}//"
 )
-CELERY_RESULT_BACKEND = (
+_default_celery_redis = (
     f"redis://{os.getenv('REDIS_HOST', 'localhost')}:"
     f"{os.getenv('REDIS_PORT', '6379')}/0"
 )
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL') or _default_celery_broker
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND') or _default_celery_redis
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -131,6 +139,8 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 600
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_DNS_CATEGORY_PAUSE_SECONDS = int(os.getenv('CELERY_DNS_CATEGORY_PAUSE_SECONDS', '180'))
 
 CACHES = {
     'default': {
@@ -146,9 +156,19 @@ PARSE_DELAY_MIN = float(os.getenv('PARSE_DELAY_MIN', '1.0'))
 PARSE_DELAY_MAX = float(os.getenv('PARSE_DELAY_MAX', '3.0'))
 PARSE_MAX_RETRIES = int(os.getenv('PARSE_MAX_RETRIES', '3'))
 PROXY_LIST = [p.strip() for p in os.getenv('PROXY_LIST', '').split(',') if p.strip()]
-CHROME_HEADLESS = os.getenv('CHROME_HEADLESS', '1') == '1'
-
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+if os.getenv('CHROME_HEADLESS', '').strip() != '':
+    CHROME_HEADLESS = os.getenv('CHROME_HEADLESS', '1') == '1'
+else:
+    CHROME_HEADLESS = sys.platform != 'win32'
+_chrome_ver_env = os.getenv('CHROME_VERSION_MAIN', '').strip()
+CHROME_VERSION_MAIN = int(_chrome_ver_env) if _chrome_ver_env.isdigit() else None
+DNS_CATALOG_ELEMENT_WAIT = int(os.getenv('DNS_CATALOG_ELEMENT_WAIT', '60'))
+DNS_PAGE_LOAD_TIMEOUT = int(os.getenv('DNS_PAGE_LOAD_TIMEOUT', '120'))
+DNS_CATALOG_SCROLL_MAX_ROUNDS = int(os.getenv('DNS_CATALOG_SCROLL_MAX_ROUNDS', '60'))
+DNS_CATALOG_SCROLL_STABLE = int(os.getenv('DNS_CATALOG_SCROLL_STABLE', '5'))
+DNS_SELENIUM_HTTP_TIMEOUT = int(os.getenv('DNS_SELENIUM_HTTP_TIMEOUT', '300'))
+DNS_SYNC_CATEGORY_COOLDOWN_MIN = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MIN', '45'))
+DNS_SYNC_CATEGORY_COOLDOWN_MAX = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MAX', '120'))
 
 LOGGING = {
     'version': 1,

@@ -1,12 +1,19 @@
+import importlib
 import os
-
-from celery import Celery
-from celery.schedules import crontab
+import sys
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
+_celery = importlib.import_module('celery')
+_schedules = importlib.import_module('celery.schedules')
+
+Celery = _celery.Celery
+crontab = _schedules.crontab
+
 app = Celery('price_monitor')
 app.config_from_object('django.conf:settings', namespace='CELERY')
+if sys.platform == 'win32':
+    app.conf.worker_pool = 'solo'
 app.autodiscover_tasks()
 
 app.conf.beat_schedule = {

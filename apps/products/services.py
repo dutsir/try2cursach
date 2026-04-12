@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from typing import Any
 
@@ -7,6 +8,7 @@ from django.utils.text import slugify
 from .models import Category, Product
 
 logger = logging.getLogger(__name__)
+
 
 
 def get_or_create_product(
@@ -20,7 +22,7 @@ def get_or_create_product(
         url=url,
         defaults={
             'name': name,
-            'slug': _make_unique_slug(name, vendor_code),
+            'slug': _make_unique_slug(name, vendor_code, url),
             'category': category,
             'vendor_code': vendor_code,
             'image_url': image_url,
@@ -44,11 +46,16 @@ def get_or_create_product(
     return product, created
 
 
-def _make_unique_slug(name: str, vendor_code: str) -> str:
-    base = slugify(name, allow_unicode=True)[:480]
-    slug = f'{base}-{vendor_code}' if vendor_code else base
-    if Product.objects.filter(slug=slug).exists():
-        slug = f'{slug}-{timezone.now().strftime("%Y%m%d%H%M%S")}'
+def _make_unique_slug(name: str, vendor_code: str, url: str) -> str:
+    base = slugify(name, allow_unicode=True)[:420]
+    url_key = hashlib.sha256(url.encode('utf-8')).hexdigest()[:12]
+    vc = slugify(vendor_code, allow_unicode=True)[:80] if vendor_code else ''
+    parts = [p for p in (base, vc, url_key) if p]
+    slug = '-'.join(parts)[:500]
+    n = 0
+    while Product.objects.filter(slug=slug).exists():
+        n += 1
+        slug = f'{slug[:480]}-d{n}'[:512]
     return slug
 
 
