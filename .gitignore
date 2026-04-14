@@ -32,4 +32,5 @@ Thumbs.db
 
 /backups/
 *.dump
-.md
+*.sql
+!docs/**/*.sql

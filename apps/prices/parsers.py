@@ -632,6 +632,7 @@ class DNSParser:
         old_price = None
         for cls in ('product-buy__prev', 'catalog-product__old-price', 'ui-kit-price__old'):
             old_price = self._extract_price_from_element(el, cls)
+          
             if old_price is not None:
                 break
 
