@@ -90,11 +90,6 @@ class PriceForecast(BaseModel):
 
 
 class AnalyticsSnapshot(BaseModel):
-    """Сохранённый снимок агрегированной аналитики (отчёты, не сырые цены).
-
-    Сырые данные по-прежнему в PriceHistory, Anomaly, PriceForecast, CurrencyRate.
-    Здесь — вычисленные сводки для дашборда и истории «как было на дату».
-    """
 
     class Kind(models.TextChoices):
         FULL_DASHBOARD = 'full_dashboard', 'Полный дашборд'

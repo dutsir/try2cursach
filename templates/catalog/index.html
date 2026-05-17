@@ -1,0 +1,44 @@
+{% extends 'catalog/base.html' %}
+
+{% block title %}Каталог — Price Monitor{% endblock %}
+
+{% block content %}
+    <h1>Каталог</h1>
+    <p class="muted">Сравнение цен DNS, Ситилинка и Ozon в одной витрине.</p>
+
+    {% if groups %}
+        <div class="cat-groups">
+            {% for g in groups %}
+                <section class="cat-group">
+                    <header class="cat-group__head">
+                        <a class="cat-group__title" href="{% url 'catalog:category' g.obj.slug %}">
+                            {{ g.obj.name }}
+                        </a>
+                        <span class="muted">{{ g.total }} товаров</span>
+                    </header>
+
+                    {% if g.children %}
+                        <ul class="cat-group__list">
+                            {% for ch in g.children %}
+                                <li>
+                                    <a href="{% url 'catalog:category' ch.obj.slug %}">
+                                        {{ ch.obj.name }}
+                                    </a>
+                                    <span class="muted">{{ ch.count }}</span>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <div class="muted" style="padding: 8px 0 0 2px;">
+                            Листовая категория ({{ g.own_count }} товаров)
+                        </div>
+                    {% endif %}
+                </section>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty">
+            Пока нет активных категорий. Добавьте их в <a href="/admin/">админке</a>.
+        </div>
+    {% endif %}
+{% endblock %}

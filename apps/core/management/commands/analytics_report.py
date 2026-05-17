@@ -1,19 +1,3 @@
-"""Единая management-команда для аналитики.
-
-Субкоманды:
-  anomalies   — отчёт по аномалиям (текст / JSON)
-  clusters    — кластеризация товаров по динамике цен
-  index       — индекс цен по категориям
-  heatmap     — тепловая карта ценовых изменений
-  forecast    — прогноз цен (ARIMA)
-  sensitivity — анализ чувствительности к курсу валюты
-  metrics     — метрики эффективности парсинга
-  deals       — самые выгодные товары
-  compare     — сравнение товаров
-  cbr         — загрузка курсов ЦБ РФ
-  save-snapshot — сохранить снимок аналитики в БД (таблица AnalyticsSnapshot)
-  list-snapshots — последние снимки из БД
-"""
 from __future__ import annotations
 
 from typing import Any
@@ -31,7 +15,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser: CommandParser) -> None:
         sub = parser.add_subparsers(dest='report', help='Тип отчёта')
 
-        # --- anomalies ---
+
         p_a = sub.add_parser('anomalies', help='Отчёт по аномалиям')
         p_a.add_argument('--days', type=int, default=7)
         p_a.add_argument('--severity', type=str, choices=['low', 'medium', 'high'])
@@ -41,55 +25,55 @@ class Command(BaseCommand):
         p_a.add_argument('--json', action='store_true', help='Вывод в JSON')
         p_a.add_argument('--out', type=str, help='Сохранить в файл')
 
-        # --- clusters ---
+
         p_c = sub.add_parser('clusters', help='Кластеризация товаров')
         p_c.add_argument('--category', type=str)
         p_c.add_argument('--clusters', type=int, default=4)
 
-        # --- index ---
+
         p_i = sub.add_parser('index', help='Индекс цен по категориям')
         p_i.add_argument('--period', type=int, default=7, help='Период сравнения (дни)')
 
-        # --- heatmap ---
+
         p_h = sub.add_parser('heatmap', help='Тепловая карта цен')
         p_h.add_argument('--category', type=str)
         p_h.add_argument('--days', type=int, default=7)
         p_h.add_argument('--max', type=int, default=30, help='Макс. товаров')
 
-        # --- forecast ---
+
         p_f = sub.add_parser('forecast', help='Прогноз цен (ARIMA)')
         p_f.add_argument('--category', type=str)
         p_f.add_argument('--product-id', type=int, help='Прогноз для одного товара')
         p_f.add_argument('--horizon', type=int, default=7, help='Горизонт прогноза (дни)')
         p_f.add_argument('--limit', type=int, help='Макс. товаров для прогноза')
 
-        # --- sensitivity ---
+
         p_s = sub.add_parser('sensitivity', help='Чувствительность к курсу валюты')
         p_s.add_argument('--category', type=str)
         p_s.add_argument('--currency', type=str, default='USD', choices=['USD', 'EUR', 'CNY'])
         p_s.add_argument('--product-id', type=int)
         p_s.add_argument('--limit', type=int, default=50)
 
-        # --- metrics ---
+
         p_m = sub.add_parser('metrics', help='Метрики парсинга')
         p_m.add_argument('--days', type=int, default=7)
 
-        # --- deals ---
+
         p_d = sub.add_parser('deals', help='Самые выгодные товары')
         p_d.add_argument('--days', type=int, default=30, help='Период для анализа')
         p_d.add_argument('--category', type=str)
         p_d.add_argument('--limit', type=int, default=20)
 
-        # --- compare ---
+
         p_cmp = sub.add_parser('compare', help='Сравнение товаров')
         p_cmp.add_argument('ids', nargs='+', type=int, help='ID товаров через пробел')
         p_cmp.add_argument('--days', type=int, default=30)
 
-        # --- cbr ---
+
         p_cbr = sub.add_parser('cbr', help='Загрузка курсов ЦБ РФ')
         p_cbr.add_argument('--backfill', type=int, help='Загрузить курсы за N дней назад')
 
-        # --- save-snapshot ---
+
         p_ss = sub.add_parser('save-snapshot', help='Сохранить снимок аналитики в БД')
         p_ss.add_argument(
             '--kind',
@@ -104,7 +88,7 @@ class Command(BaseCommand):
         p_ss.add_argument('--category', type=str, help='Для clusters/deals')
         p_ss.add_argument('--clusters', type=int, default=4)
 
-        # --- list-snapshots ---
+
         p_ls = sub.add_parser('list-snapshots', help='Показать последние снимки из БД')
         p_ls.add_argument('--limit', type=int, default=10)
         p_ls.add_argument(
@@ -113,7 +97,7 @@ class Command(BaseCommand):
             help='Фильтр по полю kind в БД (например full_dashboard); алиас: full = full_dashboard.',
         )
 
-    # Имена субкоманд с дефисом нельзя сопоставить с методом через f'_handle_{report}'.
+
     _REPORT_HANDLER = {
         'save-snapshot': '_handle_save_snapshot',
         'list-snapshots': '_handle_list_snapshots',
@@ -135,7 +119,7 @@ class Command(BaseCommand):
         else:
             self.stderr.write(self.style.ERROR(f'Неизвестный отчёт: {report}'))
 
-    # ------------------------------------------------------------------ #
+
     def _handle_anomalies(self, opts: dict) -> None:
         from apps.analytics.reports import generate_report, report_to_json, report_to_text
 
@@ -158,7 +142,7 @@ class Command(BaseCommand):
         else:
             self.stdout.write(output)
 
-    # ------------------------------------------------------------------ #
+
     def _handle_clusters(self, opts: dict) -> None:
         from apps.analytics.clustering import cluster_products
 
@@ -180,7 +164,7 @@ class Command(BaseCommand):
             if len(items) > 15:
                 self.stdout.write(f'  ... и ещё {len(items) - 15}')
 
-    # ------------------------------------------------------------------ #
+
     def _handle_index(self, opts: dict) -> None:
         from apps.analytics.price_index import compute_category_index
 
@@ -206,7 +190,7 @@ class Command(BaseCommand):
                 f'{idx.product_count:>7}'
             )
 
-    # ------------------------------------------------------------------ #
+
     def _handle_heatmap(self, opts: dict) -> None:
         from apps.analytics.heatmap import build_heatmap
 
@@ -228,7 +212,7 @@ class Command(BaseCommand):
             name = row.product_name[:40]
             self.stdout.write(f'{name:40} | {cells_str}')
 
-    # ------------------------------------------------------------------ #
+
     def _handle_forecast(self, opts: dict) -> None:
         from apps.analytics.forecasting import forecast_all, forecast_product
         from apps.products.models import Product
@@ -265,7 +249,7 @@ class Command(BaseCommand):
                 f'Прогнозы: создано {result["forecasts_created"]}, ошибок {result["errors"]}'
             ))
 
-    # ------------------------------------------------------------------ #
+
     def _handle_sensitivity(self, opts: dict) -> None:
         from apps.analytics.currency_sensitivity import (
             analyze_category_sensitivity,
@@ -307,7 +291,7 @@ class Command(BaseCommand):
                     f'{r.p_value:>8.4f} | {r.sample_size:>5} | {r.conclusion}'
                 )
 
-    # ------------------------------------------------------------------ #
+
     def _handle_metrics(self, opts: dict) -> None:
         from apps.analytics.parsing_metrics import compute_parsing_metrics
 
@@ -324,7 +308,7 @@ class Command(BaseCommand):
         if s.last_record:
             self.stdout.write(f'  Последняя запись:       {s.last_record:%Y-%m-%d %H:%M}')
 
-    # ------------------------------------------------------------------ #
+
     def _handle_deals(self, opts: dict) -> None:
         from apps.analytics.best_deals import find_best_deals
 
@@ -350,7 +334,7 @@ class Command(BaseCommand):
                 f'{d.discount_from_avg_pct:>+6.1f}% | {is_min}'
             )
 
-    # ------------------------------------------------------------------ #
+
     def _handle_compare(self, opts: dict) -> None:
         from apps.analytics.compare_products import compare
 
@@ -378,7 +362,7 @@ class Command(BaseCommand):
             if s.forecast_7d:
                 self.stdout.write(f'    Прогноз (7д):    {s.forecast_7d:.0f} руб. ({s.forecast_direction})')
 
-    # ------------------------------------------------------------------ #
+
     def _handle_cbr(self, opts: dict) -> None:
         from apps.analytics.cbr_rates import backfill_rates, save_rates_for_date
 
@@ -391,7 +375,7 @@ class Command(BaseCommand):
             created = save_rates_for_date()
             self.stdout.write(self.style.SUCCESS(f'Курсы за сегодня: {created} новых записей.'))
 
-    # ------------------------------------------------------------------ #
+
     def _handle_save_snapshot(self, opts: dict) -> None:
         from apps.analytics.models import AnalyticsSnapshot
         from apps.analytics.snapshots import save_full_dashboard_snapshot, save_kind_snapshot
@@ -435,7 +419,7 @@ class Command(BaseCommand):
             f'Сохранён снимок id={snap.pk} ({snap.get_kind_display()}). summary={snap.summary}'
         ))
 
-    # ------------------------------------------------------------------ #
+
     def _handle_list_snapshots(self, opts: dict) -> None:
         from apps.analytics.models import AnalyticsSnapshot
 

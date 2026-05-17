@@ -1,8 +1,3 @@
-"""Сохранение агрегированной аналитики в БД (модель AnalyticsSnapshot).
-
-Сырые ряды — в PriceHistory / Anomaly / PriceForecast / CurrencyRate.
-Снимки — для дашборда и сравнения «как было вчера / неделю назад».
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -41,7 +36,6 @@ def build_full_dashboard_payload(
     sensitivity_limit: int = 30,
     n_clusters: int = 4,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Возвращает (summary, payload) для kind=full_dashboard."""
     from apps.analytics.best_deals import find_best_deals
     from apps.analytics.clustering import ProductFeatures, cluster_products
     from apps.analytics.currency_sensitivity import analyze_category_sensitivity
@@ -166,7 +160,6 @@ def build_full_dashboard_payload(
 
 
 def save_full_dashboard_snapshot(**kwargs: Any) -> AnalyticsSnapshot:
-    """Считает полный дашборд и пишет одну строку AnalyticsSnapshot."""
     summary, payload = build_full_dashboard_payload(**kwargs)
     params = {k: v for k, v in kwargs.items() if v is not None}
     return AnalyticsSnapshot.objects.create(
@@ -184,7 +177,6 @@ def save_kind_snapshot(
     scope_key: str = '',
     parameters: dict[str, Any] | None = None,
 ) -> AnalyticsSnapshot:
-    """Сохраняет один тип отчёта (без полного дашборда)."""
     parameters = parameters or {}
     if kind == AnalyticsSnapshot.Kind.CLUSTERS:
         from apps.analytics.clustering import cluster_products

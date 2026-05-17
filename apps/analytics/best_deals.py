@@ -1,7 +1,3 @@
-"""Самые выгодные товары — товары, достигшие минимума за N дней.
-
-Сравнивает текущую (актуальную) цену с минимальной и средней за период.
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -33,7 +29,6 @@ def find_best_deals(
     category_slug: str | None = None,
     limit: int = 20,
 ) -> list[DealInfo]:
-    """Находит товары с наибольшей скидкой относительно средней цены за period."""
     since = timezone.now() - _dt.timedelta(days=days)
 
     qs = Product.objects.filter(is_active=True).select_related('category')

@@ -1,7 +1,3 @@
-"""Анализ чувствительности цен товаров к курсу валют.
-
-Вычисляет корреляцию Пирсона между ценой товара и курсом валюты ЦБ РФ.
-"""
 from __future__ import annotations
 
 import logging
@@ -50,7 +46,6 @@ def analyze_product_sensitivity(
     product: Product,
     currency_code: str = 'USD',
 ) -> SensitivityResult | None:
-    """Корреляция цены товара с курсом валюты по совпадающим датам."""
     price_records = list(
         PriceHistory.objects
         .filter(product=product)
@@ -106,7 +101,6 @@ def analyze_category_sensitivity(
     currency_code: str = 'USD',
     limit: int = 50,
 ) -> list[SensitivityResult]:
-    """Корреляция для товаров категории (или всех). Сортировка по |corr| desc."""
     qs = Product.objects.filter(is_active=True)
     if category_slug:
         qs = qs.filter(category__slug=category_slug)

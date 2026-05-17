@@ -1,8 +1,3 @@
-"""Кластеризация товаров по динамике цен.
-
-Группирует товары в кластеры: волатильные, стабильные, лидеры падений,
-лидеры роста. Использует KMeans по фичам динамики.
-"""
 from __future__ import annotations
 
 import logging
@@ -32,9 +27,9 @@ class ProductFeatures:
     product_name: str
     category: str
     mean_price: float
-    volatility: float      # std / mean (CV)
-    trend: float           # (last - first) / first
-    max_change_pct: float  # max single-step % change
+    volatility: float
+    trend: float
+    max_change_pct: float
     num_records: int
 
 
@@ -77,7 +72,6 @@ def cluster_products(
     category_slug: str | None = None,
     n_clusters: int = 4,
 ) -> dict[str, list[ProductFeatures]]:
-    """Возвращает {label: [ProductFeatures, ...]} после кластеризации."""
     from sklearn.cluster import KMeans
     from sklearn.preprocessing import StandardScaler
 

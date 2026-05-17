@@ -16,6 +16,15 @@ DEBUG = os.getenv('DEBUG', '0') == '1'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
+CSRF_TRUSTED_ORIGINS = [
+    x.strip()
+    for x in os.getenv(
+        'CSRF_TRUSTED_ORIGINS',
+        'http://localhost,http://127.0.0.1',
+    ).split(',')
+    if x.strip()
+]
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -23,6 +32,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.humanize',
     'rest_framework',
     'rest_framework.authtoken',
     'django_filters',
@@ -142,6 +152,17 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_DNS_CATEGORY_PAUSE_SECONDS = int(os.getenv('CELERY_DNS_CATEGORY_PAUSE_SECONDS', '180'))
 
+
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
+
+MERGE_AUDIT_RETENTION_DAYS = int(os.getenv('MERGE_AUDIT_RETENTION_DAYS', '90'))
+MERGE_AUDIT_PURGE_BATCH = int(os.getenv('MERGE_AUDIT_PURGE_BATCH', '5000'))
+
+
+PARSE_RUN_STUCK_TIMEOUT_MINUTES = int(os.getenv('PARSE_RUN_STUCK_TIMEOUT_MINUTES', '30'))
+
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
@@ -162,6 +183,12 @@ else:
     CHROME_HEADLESS = sys.platform != 'win32'
 _chrome_ver_env = os.getenv('CHROME_VERSION_MAIN', '').strip()
 CHROME_VERSION_MAIN = int(_chrome_ver_env) if _chrome_ver_env.isdigit() else None
+
+
+CHROME_START_MINIMIZED = os.getenv('CHROME_START_MINIMIZED', '1') == '1'
+
+
+CHROME_STARTUP_TIMEOUT = int(os.getenv('CHROME_STARTUP_TIMEOUT', '90'))
 DNS_CATALOG_ELEMENT_WAIT = int(os.getenv('DNS_CATALOG_ELEMENT_WAIT', '60'))
 DNS_PAGE_LOAD_TIMEOUT = int(os.getenv('DNS_PAGE_LOAD_TIMEOUT', '120'))
 DNS_CATALOG_SCROLL_MAX_ROUNDS = int(os.getenv('DNS_CATALOG_SCROLL_MAX_ROUNDS', '60'))
@@ -169,6 +196,76 @@ DNS_CATALOG_SCROLL_STABLE = int(os.getenv('DNS_CATALOG_SCROLL_STABLE', '5'))
 DNS_SELENIUM_HTTP_TIMEOUT = int(os.getenv('DNS_SELENIUM_HTTP_TIMEOUT', '300'))
 DNS_SYNC_CATEGORY_COOLDOWN_MIN = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MIN', '45'))
 DNS_SYNC_CATEGORY_COOLDOWN_MAX = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MAX', '120'))
+
+
+CITILINK_CATALOG_ELEMENT_WAIT = int(os.getenv('CITILINK_CATALOG_ELEMENT_WAIT', '45'))
+CITILINK_PAGE_LOAD_TIMEOUT = int(os.getenv('CITILINK_PAGE_LOAD_TIMEOUT', '120'))
+CITILINK_MAX_PAGES = int(os.getenv('CITILINK_MAX_PAGES', '80'))
+
+CITILINK_CITY_CODE = os.getenv('CITILINK_CITY_CODE', '').strip()
+
+
+if os.getenv('CITILINK_HEADLESS', '').strip() != '':
+    CITILINK_HEADLESS = os.getenv('CITILINK_HEADLESS', '0') == '1'
+else:
+    CITILINK_HEADLESS = False
+
+
+CITILINK_USER_DATA_DIR = os.getenv(
+    'CITILINK_USER_DATA_DIR',
+    str(BASE_DIR / 'var' / 'chrome_profiles' / 'citilink'),
+)
+
+
+OZON_PAGE_LOAD_TIMEOUT = int(os.getenv('OZON_PAGE_LOAD_TIMEOUT', '120'))
+OZON_SCROLL_MAX_ROUNDS = int(os.getenv('OZON_SCROLL_MAX_ROUNDS', '50'))
+OZON_SCROLL_MIN_ROUNDS = int(os.getenv('OZON_SCROLL_MIN_ROUNDS', '15'))
+OZON_SCROLL_PAUSE_MIN = float(os.getenv('OZON_SCROLL_PAUSE_MIN', '1.2'))
+OZON_SCROLL_PAUSE_MAX = float(os.getenv('OZON_SCROLL_PAUSE_MAX', '2.8'))
+OZON_SCROLL_STABILITY_THRESHOLD = int(os.getenv('OZON_SCROLL_STABILITY_THRESHOLD', '12'))
+OZON_PAGINATION_MAX_PAGES = int(os.getenv('OZON_PAGINATION_MAX_PAGES', '8'))
+
+OZON_COOKIE_FILE = os.getenv('OZON_COOKIE_FILE', '').strip()
+
+
+if os.getenv('OZON_HEADLESS', '').strip() != '':
+    OZON_HEADLESS = os.getenv('OZON_HEADLESS', '0') == '1'
+else:
+    OZON_HEADLESS = False
+
+
+OZON_USER_DATA_DIR = os.getenv(
+    'OZON_USER_DATA_DIR',
+    str(BASE_DIR / 'var' / 'chrome_profiles' / 'ozon'),
+)
+
+
+ENABLE_ADVANCED_ANALYTICS = os.getenv('ENABLE_ADVANCED_ANALYTICS', '0') == '1'
+
+
+DEDUP_V2 = os.getenv('DEDUP_V2', '1') == '1'
+
+
+DEDUP_SHADOW = os.getenv('DEDUP_SHADOW', '0') == '1'
+
+
+DEDUP_AUTO_MERGE_THRESHOLD = float(os.getenv('DEDUP_AUTO_MERGE_THRESHOLD', '0.85'))
+DEDUP_REVIEW_THRESHOLD = float(os.getenv('DEDUP_REVIEW_THRESHOLD', '0.65'))
+
+
+DEDUP_CROSS_SOURCE_SPECS_ENABLED = os.getenv('DEDUP_CROSS_SOURCE_SPECS_ENABLED', '1') == '1'
+DEDUP_CROSS_SOURCE_SPECS_MIN_MATCHED = int(os.getenv('DEDUP_CROSS_SOURCE_SPECS_MIN_MATCHED', '2'))
+
+
+DEDUP_EMBEDDING_ENABLED = os.getenv('DEDUP_EMBEDDING_ENABLED', '1') == '1'
+DEDUP_EMBEDDING_MODEL = os.getenv(
+    'DEDUP_EMBEDDING_MODEL',
+    'intfloat/multilingual-e5-base',
+)
+
+DEDUP_EMBEDDING_DIM = int(os.getenv('DEDUP_EMBEDDING_DIM', '768'))
+DEDUP_EMBEDDING_AUTO_THRESHOLD = float(os.getenv('DEDUP_EMBEDDING_AUTO_THRESHOLD', '0.86'))
+DEDUP_EMBEDDING_REVIEW_THRESHOLD = float(os.getenv('DEDUP_EMBEDDING_REVIEW_THRESHOLD', '0.75'))
 
 LOGGING = {
     'version': 1,

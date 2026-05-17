@@ -1,8 +1,3 @@
-"""Тепловая карта ценовых изменений (текстовая таблица).
-
-Сетка товаров × даты: процент изменения цены за день/неделю
-с текстовой цветовой индикацией (▲ ▼ ●).
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -19,7 +14,7 @@ from apps.products.models import Category, Product
 class HeatmapCell:
     date: _dt.date
     price: float | None
-    change_pct: float | None  # к предыдущему периоду
+    change_pct: float | None
 
     @property
     def indicator(self) -> str:
@@ -48,10 +43,6 @@ def build_heatmap(
     days: int = 7,
     max_products: int = 30,
 ) -> tuple[list[_dt.date], list[HeatmapRow]]:
-    """Строит тепловую карту за последние `days` дней.
-
-    Returns (dates, rows) — список дат-колонок и строки товаров.
-    """
     now = timezone.now()
     start = now - _dt.timedelta(days=days)
 

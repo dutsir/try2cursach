@@ -6,11 +6,12 @@ from rest_framework.response import Response
 from apps.alerts.models import Notification, Subscription
 from apps.analytics.models import Anomaly
 from apps.prices.models import PriceHistory
-from apps.products.models import Product
+from apps.products.models import Offer, Product
 
 from .serializers import (
     AnomalySerializer,
     NotificationSerializer,
+    OfferSerializer,
     PriceHistorySerializer,
     ProductDetailSerializer,
     ProductListSerializer,
@@ -19,7 +20,12 @@ from .serializers import (
 
 
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Product.objects.filter(is_active=True).select_related('category')
+    queryset = (
+        Product.objects
+        .filter(is_active=True)
+        .select_related('category')
+        .prefetch_related('offers', 'category__listings')
+    )
     permission_classes = [permissions.AllowAny]
     filterset_fields = ['category__slug', 'is_active']
     search_fields = ['name', 'vendor_code']
@@ -33,9 +39,24 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'], url_path='price-history')
     def price_history(self, request: Request, pk: int | None = None) -> Response:
         product = self.get_object()
-        prices = PriceHistory.objects.filter(product=product).order_by('-timestamp')[:100]
-        serializer = PriceHistorySerializer(prices, many=True)
-        return Response(serializer.data)
+        prices = PriceHistory.objects.filter(product=product).order_by('-timestamp')[:300]
+        return Response(PriceHistorySerializer(prices, many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='offers')
+    def offers(self, request: Request, pk: int | None = None) -> Response:
+        product = self.get_object()
+        offers = product.offers.all().order_by('source')
+        return Response(OfferSerializer(offers, many=True).data)
+
+
+class OfferViewSet(viewsets.ReadOnlyModelViewSet):
+
+    queryset = Offer.objects.select_related('product', 'product__category').all()
+    serializer_class = OfferSerializer
+    permission_classes = [permissions.AllowAny]
+    filterset_fields = ['source', 'product', 'product__category__slug', 'is_available']
+    search_fields = ['product__name', 'vendor_code']
+    ordering_fields = ['last_seen_at', 'source']
 
 
 class SubscriptionViewSet(

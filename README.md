@@ -1,15 +1,35 @@
-Система мониторинга цен на компьютерные комплектующие (ОЗУ, мониторы) с сайта DNS
-с модулем детекции аномалий в ценообразовании.
+Агрегатор цен на компьютерные комплектующие: парсинг **DNS**, **Citilink**, **Ozon**,
+сравнение офферов по магазинам и дедупликация в единый master-товар (`Product` + `Offer`).
+
+Опционально: детекция аномалий в ценах (`ENABLE_ADVANCED_ANALYTICS=1`).
 
 ## Стек технологий
 
 - **Backend**: Django 5, Django REST Framework 3.15
 - **Очереди задач**: Celery 5.4 + RabbitMQ
-- **База данных**: PostgreSQL 15
+- **База данных**: PostgreSQL 15 + расширение **pgvector** (HNSW индекс на `Product.match_embedding`)
 - **Кэш**: Redis 7
 - **Парсинг**: Selenium + undetected-chromedriver
+- **Семантический матчинг**: sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`, 384-dim)
 - **Аналитика**: NumPy, SciPy (FFT для детекции циклов)
 - **Контейнеризация**: Docker, Docker Compose
+
+### Требования к Postgres
+
+В docker-compose используется образ `pgvector/pgvector:pg15` — расширение
+`vector` ставится автоматически. Если поднимаешь Postgres сам (Linux/Windows):
+
+```bash
+# Ubuntu / Debian
+sudo apt install postgresql-15-pgvector
+
+# Windows — собрать из исходников (нужны Visual Studio Build Tools):
+# https://github.com/pgvector/pgvector#windows
+```
+
+Расширение активируется автоматически миграцией `0012_install_pgvector_*`
+(`CREATE EXTENSION IF NOT EXISTS vector`). Без него `manage.py migrate`
+упадёт на этой миграции.
 
 ## Быстрый старт
 
@@ -102,7 +122,7 @@ docker-compose exec web python manage.py parse_dns --category operativnaya-pamya
 | GET | `/api/subscriptions/` | Подписки текущего пользователя |
 | POST | `/api/subscriptions/` | Создать подписку |
 | DELETE | `/api/subscriptions/{id}/` | Удалить подписку |
-| GET | `/api/anomalies/` | Обнаруженные аномалии |
+| GET | `/api/anomalies/` | Аномалии (если `ENABLE_ADVANCED_ANALYTICS=1`) |
 
 ## Периодические задачи (Celery Beat)
 
@@ -110,7 +130,9 @@ docker-compose exec web python manage.py parse_dns --category operativnaya-pamya
 |---|---|
 | Парсинг всех категорий | Каждые 6 часов |
 | Проверка подписок | Каждый час |
-| Детекция аномалий | Ежедневно в 03:00 |
+| Очистка зависших ParseRun | Каждые 15 минут |
+| Purge MergeAuditLog (UPDATE) | Воскресенье 04:00 |
+| Детекция аномалий | Ежедневно 03:00 — **только при `ENABLE_ADVANCED_ANALYTICS=1`** |
 
 ## Тесты
 
@@ -118,18 +140,85 @@ docker-compose exec web python manage.py parse_dns --category operativnaya-pamya
 docker-compose exec web pytest -v
 ```
 
+## Dedupe V2: операционный чеклист
+
+Короткий безопасный порядок запуска новой дедупликации в проде/стейдже.
+
+### 1) Подготовка и бэкфилл фич (без merge)
+
+```bash
+# dry-run
+python manage.py rebuild_features --dry-run
+
+# apply
+python manage.py rebuild_features --apply
+```
+
+### 2) Shadow-прогон (без изменения product_id)
+
+- Включить `DEDUP_SHADOW=True`, `DEDUP_V2=False`.
+- Дать поработать 1-3 дня на обычном парсинге.
+- Проверять отчёт:
+
+```bash
+python manage.py audit_dedup --days 3 --sample-size 50
+```
+
+### 3) Ручной one-shot rebuild мастеров
+
+```bash
+# оценка изменений
+python manage.py rebuild_master_products --dry-run --threshold 0.85 --cooldown-hours 24
+
+# применение
+python manage.py rebuild_master_products --apply --threshold 0.85 --cooldown-hours 24
+
+# rollback по run_id (из вывода команды)
+python manage.py rebuild_master_products --rollback <run_id>
+```
+
+### 4) Переключение на v2
+
+- Выключить shadow, включить v2:
+  - `DEDUP_SHADOW=False`
+  - `DEDUP_V2=True`
+- Legacy остаётся fallback-веткой на случай исключений.
+
+### 5) Ежедневный KPI-мониторинг
+
+```bash
+python manage.py audit_dedup --days 7 --sample-size 50
+```
+
+Смотреть в первую очередь:
+- `cross_source_coverage`
+- `merge_error_rate` (целевой < 1%, alert > 2%)
+- `review_queue_depth` (целевой < 200)
+- `silent_orphans` (целевой 0)
+- `hard_reject_rate` (без резких скачков)
+
+### Что уже усилено в коде
+
+- GIN индекс на `Product.specs_fingerprint`.
+- Транзитивная защита перед merge (проверка конфликтов на сэмплах офферов).
+- Cooldown-защита в `rebuild_master_products` (по умолчанию 24 часа).
+
 ## Структура проекта
 
 ```
 price_monitor/
-├── config/             # Настройки Django, Celery
+├── config/             # Django, Celery
 ├── apps/
-│   ├── core/           # User, BaseModel
-│   ├── products/       # Category, Product
-│   ├── prices/         # PriceHistory, DNSParser, задачи парсинга
-│   ├── alerts/         # Subscription, Notification
-│   ├── analytics/      # Anomaly, detector (spike/manipulation/cyclic)
-│   └── api/            # DRF ViewSets, serializers
-├── docker/             # Dockerfiles
+│   ├── core/           # User, management-команды parse_*
+│   ├── products/       # Category, Product, Offer, dedupe/
+│   ├── prices/         # PriceHistory, парсеры DNS/Citilink/Ozon
+│   ├── alerts/         # Подписки на цену
+│   ├── analytics/      # Опционально: Anomaly, прогнозы, снимки
+│   └── api/            # REST API
+├── templates/          # UI каталога и карточки товара
+├── docs/               # DEPLOY_AND_MIGRATE.md
+├── docker/
 └── docker-compose.yml
 ```
+
+Локально (не в git): `var/chrome_profiles/` — профили Chrome для anti-bot.

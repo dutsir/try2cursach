@@ -36,6 +36,23 @@ class AnomalyResult:
     description: str
 
 
+def _coerce_records(records: list[PricePoint | Decimal]) -> list[PricePoint]:
+    if not records:
+        return []
+    if isinstance(records[0], PricePoint):
+        return records
+    now = timezone.now()
+    out: list[PricePoint] = []
+    for i, price in enumerate(records):
+        out.append(
+            PricePoint(
+                price=Decimal(str(price)),
+                timestamp=now + _dt.timedelta(days=i),
+            ),
+        )
+    return out
+
+
 def _get_recent_records(product: Product, limit: int = 14) -> list[PricePoint]:
     records = (
         PriceHistory.objects
@@ -54,7 +71,6 @@ def _days_between(a: _dt.datetime, b: _dt.datetime) -> float:
 
 
 def _find_past_similar_spike(product: Product, change_pct: float, current_ts: _dt.datetime) -> str:
-    """Check if a similar spike happened in older history (beyond last 14 records)."""
     older = (
         PriceHistory.objects
         .filter(product=product, timestamp__lt=current_ts - _dt.timedelta(days=14))
@@ -72,7 +88,11 @@ def _find_past_similar_spike(product: Product, change_pct: float, current_ts: _d
     return ''
 
 
-def detect_spike(records: list[PricePoint], product: Product | None = None) -> AnomalyResult | None:
+def detect_spike(
+    records: list[PricePoint | Decimal],
+    product: Product | None = None,
+) -> AnomalyResult | None:
+    records = _coerce_records(records)
     if len(records) < 2:
         return None
 
@@ -103,7 +123,8 @@ def detect_spike(records: list[PricePoint], product: Product | None = None) -> A
     return AnomalyResult(anomaly_type=Anomaly.AnomalyType.SPIKE, severity=severity, description=desc)
 
 
-def detect_manipulation(records: list[PricePoint], **_kw) -> AnomalyResult | None:
+def detect_manipulation(records: list[PricePoint | Decimal], **_kw) -> AnomalyResult | None:
+    records = _coerce_records(records)
     if len(records) < 4:
         return None
 
@@ -135,7 +156,8 @@ def detect_manipulation(records: list[PricePoint], **_kw) -> AnomalyResult | Non
     return None
 
 
-def detect_cyclic(records: list[PricePoint], **_kw) -> AnomalyResult | None:
+def detect_cyclic(records: list[PricePoint | Decimal], **_kw) -> AnomalyResult | None:
+    records = _coerce_records(records)
     if len(records) < MIN_PRICES_FOR_FFT:
         return None
 

@@ -1,6 +1,6 @@
 import pytest
 
-from apps.products.models import Category, Product
+from apps.products.models import Category, CategoryListing, Product
 
 
 @pytest.mark.django_db
@@ -9,14 +9,20 @@ class TestCategoryModel:
         cat = Category.objects.create(
             name='Оперативная память',
             slug='operativnaya-pamyat',
-            dns_category_slug='17a89a3916404e77/operativnaya-pamyat',
+        )
+        CategoryListing.objects.create(
+            category=cat,
+            source=CategoryListing.Source.DNS,
+            external_path='17a89a3916404e77/operativnaya-pamyat',
+            is_active=True,
         )
         assert cat.pk is not None
         assert cat.is_active is True
         assert str(cat) == 'Оперативная память'
+        assert cat.store_path('dns') == '17a89a3916404e77/operativnaya-pamyat'
 
     def test_auto_slug(self):
-        cat = Category.objects.create(name='Мониторы')
+        cat = Category.objects.create(name='Тестовая авто-слаг категория')
         assert cat.slug != ''
 
 

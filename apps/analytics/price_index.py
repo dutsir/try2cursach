@@ -1,8 +1,3 @@
-"""Индекс цен по категориям.
-
-Средняя и медианная цена по категории в динамике, сравнение текущего
-периода с предыдущим.
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -37,11 +32,6 @@ def _median(values: list[float]) -> float:
 def compute_category_index(
     period_days: int = 7,
 ) -> list[CategoryIndex]:
-    """Вычисляет индекс цен для каждой активной категории.
-
-    current = актуальные цены (is_actual=True)
-    prev = цены от period_days..2*period_days назад
-    """
     now = timezone.now()
     prev_start = now - _dt.timedelta(days=period_days * 2)
     prev_end = now - _dt.timedelta(days=period_days)

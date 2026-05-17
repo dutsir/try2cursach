@@ -8,25 +8,139 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
-from dataclasses import dataclass, field
+import zipfile
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
 from django.conf import settings
 
+from .base_parser import BaseParser
+
 logger = logging.getLogger(__name__)
 
 
-class DNSBlockedError(RuntimeError):
-    pass
-
+DNS_BASE_URL = 'https://www.dns-shop.ru'
 
 DNS_BLOCKED_MSG = (
     'DNS открыл страницу «доступ запрещён» (403): блокировка по IP/сети на стороне сайта, '
     'не из‑за headless. Попробуйте другую сеть, VPN с выходом в РФ, или прокси в PROXY_LIST. '
     'В курсовой допустимо описать ограничение парсинга публичного магазина.'
 )
+
+
+class DNSBlockedError(RuntimeError):
+    pass
+
+
+_DNS_CATALOG_CARDS_EXTRACT_JS = r"""
+return (function () {
+  function cleanPrice(raw) {
+    if (!raw) return null;
+    var s = String(raw).split('\u20bd')[0].trim().replace(/\s+/g, '').replace(/[^\d]/g, '');
+    return /^\d+$/.test(s) ? parseInt(s, 10) : null;
+  }
+  function cardIsAvailable(card) {
+    if (card.className && /--out-of-stock|--not-available|--sold-out/i.test(card.className)) {
+      return false;
+    }
+    var t = (card.innerText || '').toLowerCase();
+    if (t.indexOf('нет в наличии') !== -1) return false;
+    if (t.indexOf('снят с производства') !== -1) return false;
+    return true;
+  }
+  function extractFromCard(card) {
+    var nameEl = card.querySelector('a.catalog-product__name')
+      || card.querySelector('a[data-role="product-link"]')
+      || card.querySelector('a[href*="/product/"]');
+    if (!nameEl) return null;
+    var name = (nameEl.innerText || '').trim();
+    var link = nameEl.href || nameEl.getAttribute('href') || '';
+    if (!name || !link) return null;
+
+    var price = null;
+    var priceClasses = ['product-buy__price', 'catalog-product__price', 'ui-kit-price__main'];
+    for (var i = 0; i < priceClasses.length; i++) {
+      var pe = card.getElementsByClassName(priceClasses[i])[0];
+      if (pe) {
+        price = cleanPrice(pe.textContent || '');
+        if (price != null) break;
+      }
+    }
+    if (price == null) {
+      try {
+        var xr = document.evaluate(
+          ".//*[contains(., '\u20bd')]",
+          card,
+          null,
+          XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+          null
+        );
+        for (var j = 0; j < xr.snapshotLength; j++) {
+          var n = xr.snapshotItem(j);
+          price = cleanPrice(n.textContent || '');
+          if (price != null) break;
+        }
+      } catch (e) {}
+    }
+    if (price == null) return null;
+
+    var oldPrice = null;
+    var oldClasses = ['product-buy__prev', 'catalog-product__old-price', 'ui-kit-price__old'];
+    for (var k = 0; k < oldClasses.length; k++) {
+      var oe = card.getElementsByClassName(oldClasses[k])[0];
+      if (oe) {
+        oldPrice = cleanPrice(oe.textContent || '');
+        if (oldPrice != null) break;
+      }
+    }
+
+    var imageUrl = '';
+    var img = card.querySelector('.catalog-product__image img');
+    if (img) {
+      imageUrl = img.getAttribute('src') || img.getAttribute('data-src') || '';
+    }
+
+    var vendorCode = '';
+    var codeEl = card.getElementsByClassName('catalog-product__code')[0];
+    if (codeEl) {
+      var m = (codeEl.textContent || '').match(/(\d+)/);
+      if (m) vendorCode = m[1];
+    }
+
+    return {
+      name: name,
+      url: link,
+      price: price,
+      old_price: oldPrice,
+      image_url: imageUrl,
+      vendor_code: vendorCode,
+      is_available: cardIsAvailable(card)
+    };
+  }
+
+  var cards = document.getElementsByClassName('catalog-product');
+  var out = [];
+  for (var c = 0; c < cards.length; c++) {
+    var row = extractFromCard(cards[c]);
+    if (row) out.push(row);
+  }
+  return out;
+})();
+"""
+
+
+@dataclass
+class ParsedProduct:
+    name: str
+    price: int
+    url: str
+    vendor_code: str = ''
+    image_url: str = ''
+    old_price: int | None = None
+    is_available: bool = True
 
 
 def _chrome_major_version() -> int | None:
@@ -57,8 +171,6 @@ def _chrome_major_version() -> int | None:
             logger.debug('Не удалось прочитать версию Chrome из реестра', exc_info=True)
     return None
 
-DNS_BASE_URL = 'https://www.dns-shop.ru'
-
 
 def _chrome_user_agent() -> str:
     major = _chrome_major_version() or 131
@@ -74,41 +186,45 @@ def _chrome_user_agent() -> str:
     )
 
 
-def _noop_chrome_quit(*_a: Any, **_k: Any) -> None:
-    return None
+_PROFILE_LOCK_FILES = (
+    'SingletonLock',
+    'SingletonSocket',
+    'SingletonCookie',
+    'lockfile',
+    os.path.join('Default', 'lockfile'),
+)
+
+
+def _clean_stale_profile_locks(profile_dir: str) -> None:
+    if not profile_dir or not os.path.isdir(profile_dir):
+        return
+    removed: list[str] = []
+    for rel in _PROFILE_LOCK_FILES:
+        path = os.path.join(profile_dir, rel)
+        try:
+            if os.path.exists(path) or os.path.islink(path):
+                os.unlink(path)
+                removed.append(os.path.basename(path))
+        except OSError:
+            logger.debug('Не удалось удалить %r (возможно, активный Chrome)', path)
+    if removed:
+        logger.info('Очищены stale-блокировки профиля Chrome: %s', ', '.join(removed))
 
 
 def _dns_page_blocked(title: str, src_head: str) -> bool:
-    t = title or ''
+    t = (title or '').strip()
     s = (src_head or '')[:12000]
     low = (t + '\n' + s).lower()
-    if '403' in t.strip() or '403 error' in low[:800]:
+    if '403' in t or '403 error' in low[:800]:
         return True
-    if 'forbidden' in t.lower():
-        return True
-    if 'http 403' in low:
+    if 'forbidden' in t.lower() or 'http 403' in low:
         return True
     if 'доступ к сайту' in low and 'запрещ' in low:
         return True
     return False
 
 
-@dataclass
-class ParsedProduct:
-    name: str
-    price: int
-    url: str
-    vendor_code: str = ''
-    image_url: str = ''
-    old_price: int | None = None
-
-
 def _parse_proxy_url(proxy: str) -> dict[str, Any]:
-    """Parse proxy URL into components. Supports:
-    - http://user:pass@host:port
-    - socks5://user:pass@host:port
-    - host:port  (no auth)
-    """
     if '://' not in proxy:
         proxy = f'http://{proxy}'
     parsed = urlparse(proxy)
@@ -124,9 +240,6 @@ def _parse_proxy_url(proxy: str) -> dict[str, Any]:
 def _make_proxy_auth_extension(
     scheme: str, host: str, port: int, username: str, password: str,
 ) -> str:
-    """Create a packed Chrome extension (.zip) that configures proxy with auth.
-    Returns the path to the zip file.
-    """
     manifest = (
         '{"version":"1.0.0","manifest_version":2,'
         '"name":"ProxyAuth","permissions":["proxy","tabs","unlimitedStorage",'
@@ -134,26 +247,23 @@ def _make_proxy_auth_extension(
         '"background":{"scripts":["background.js"]},'
         '"minimum_chrome_version":"22.0.0"}'
     )
-
-    background = """
-var config = {
-  mode: "fixed_servers",
-  rules: {
-    singleProxy: {scheme: "%s", host: "%s", port: %d},
-    bypassList: ["localhost","127.0.0.1"]
-  }
-};
-chrome.proxy.settings.set({value: config, scope: "regular"}, function(){});
-chrome.webRequest.onAuthRequired.addListener(
-  function(details) {
-    return {authCredentials: {username: "%s", password: "%s"}};
-  },
-  {urls: ["<all_urls>"]},
-  ['blocking']
-);
-""".strip() % (scheme, host, port, username, password)
-
-    import zipfile
+    background = (
+        'var config = {\n'
+        '  mode: "fixed_servers",\n'
+        '  rules: {\n'
+        f'    singleProxy: {{scheme: "{scheme}", host: "{host}", port: {port}}},\n'
+        '    bypassList: ["localhost","127.0.0.1"]\n'
+        '  }\n'
+        '};\n'
+        'chrome.proxy.settings.set({value: config, scope: "regular"}, function(){});\n'
+        'chrome.webRequest.onAuthRequired.addListener(\n'
+        '  function(details) {\n'
+        f'    return {{authCredentials: {{username: "{username}", password: "{password}"}}}};\n'
+        '  },\n'
+        '  {urls: ["<all_urls>"]},\n'
+        "  ['blocking']\n"
+        ');\n'
+    )
     ext_dir = tempfile.mkdtemp(prefix='proxy_auth_')
     zip_path = os.path.join(ext_dir, 'proxy_auth.zip')
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -162,82 +272,139 @@ chrome.webRequest.onAuthRequired.addListener(
     return zip_path
 
 
-@dataclass
-class DNSParser:
-    headless: bool = True
-    proxy: str | None = None
-    max_retries: int = 3
-    delay_min: float = 1.0
-    delay_max: float = 3.0
-    page_load_timeout: int = 30
-    _driver: Any = field(default=None, init=False, repr=False)
-    _uc: Any = field(default=None, init=False, repr=False)
-    _by: Any = field(default=None, init=False, repr=False)
-    _ec: Any = field(default=None, init=False, repr=False)
-    _web_driver_wait: Any = field(default=None, init=False, repr=False)
+def _noop_chrome_quit(*_a: Any, **_k: Any) -> None:
+    return None
 
-    def __post_init__(self) -> None:
-        self.headless = getattr(settings, 'CHROME_HEADLESS', True)
-        self.delay_min = getattr(settings, 'PARSE_DELAY_MIN', 1.0)
-        self.delay_max = getattr(settings, 'PARSE_DELAY_MAX', 3.0)
-        self.max_retries = getattr(settings, 'PARSE_MAX_RETRIES', 3)
-        self.catalog_element_wait = int(getattr(settings, 'DNS_CATALOG_ELEMENT_WAIT', 60))
-        self.page_load_timeout = int(getattr(settings, 'DNS_PAGE_LOAD_TIMEOUT', 60))
-        self.catalog_scroll_max_rounds = int(getattr(settings, 'DNS_CATALOG_SCROLL_MAX_ROUNDS', 60))
-        self.catalog_scroll_stable = int(getattr(settings, 'DNS_CATALOG_SCROLL_STABLE', 5))
+
+class ChromeDriverMixin:
+
+    headless: bool
+    proxy: str | None
+    max_retries: int
+    delay_min: float
+    delay_max: float
+    page_load_timeout: int
+    selenium_http_timeout: int
+    start_minimized: bool
+    user_data_dir: str
+    _driver: Any
+    _uc: Any
+    _by: Any
+    _ec: Any
+    _web_driver_wait: Any
+    _selenium_exceptions: Any
+    _proxy_ext_dir: str | None
+
+    def _init_chrome_runtime(
+        self,
+        *,
+        page_timeout_setting: str,
+        page_timeout_default: int,
+        headless_setting: str | None = None,
+        headless_default: bool | None = None,
+        user_data_dir_setting: str | None = None,
+    ) -> None:
+        default_headless = getattr(settings, 'CHROME_HEADLESS', True)
+        if headless_setting is not None:
+            fallback = headless_default if headless_default is not None else default_headless
+            self.headless = bool(getattr(settings, headless_setting, fallback))
+        else:
+            self.headless = bool(default_headless if headless_default is None else headless_default)
+
+        self.delay_min = float(getattr(settings, 'PARSE_DELAY_MIN', 1.0))
+        self.delay_max = float(getattr(settings, 'PARSE_DELAY_MAX', 3.0))
+        self.max_retries = int(getattr(settings, 'PARSE_MAX_RETRIES', 3))
+        self.page_load_timeout = int(getattr(settings, page_timeout_setting, page_timeout_default))
         self.selenium_http_timeout = int(getattr(settings, 'DNS_SELENIUM_HTTP_TIMEOUT', 300))
-        self._load_selenium_deps()
 
+        self.start_minimized = (
+            not self.headless
+            and bool(getattr(settings, 'CHROME_START_MINIMIZED', True))
+        )
+
+        self.user_data_dir = ''
+        if user_data_dir_setting:
+            udd = getattr(settings, user_data_dir_setting, '') or ''
+            self.user_data_dir = str(udd).strip()
+
+        self._driver = None
+        self._uc = None
+        self._by = None
+        self._ec = None
+        self._web_driver_wait = None
+        self._selenium_exceptions = None
+        self._proxy_ext_dir = None
+
+        self._load_selenium_deps()
         proxy_list: list[str] = getattr(settings, 'PROXY_LIST', [])
-        if proxy_list:
-            self.proxy = random.choice(proxy_list)
+        self.proxy = random.choice(proxy_list) if proxy_list else None
 
     def _load_selenium_deps(self) -> None:
         try:
             self._uc = importlib.import_module('undetected_chromedriver')
-            by_module = importlib.import_module('selenium.webdriver.common.by')
+            self._by = importlib.import_module('selenium.webdriver.common.by').By
             self._ec = importlib.import_module('selenium.webdriver.support.expected_conditions')
-            wait_module = importlib.import_module('selenium.webdriver.support.ui')
-            self._by = by_module.By
-            self._web_driver_wait = wait_module.WebDriverWait
+            self._web_driver_wait = importlib.import_module('selenium.webdriver.support.ui').WebDriverWait
+            self._selenium_exceptions = importlib.import_module('selenium.common.exceptions')
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 'Missing parser dependency. Install selenium and undetected-chromedriver.'
             ) from exc
 
-    def _build_driver(self) -> Any:
+    def _build_options(self) -> Any:
         options = self._uc.ChromeOptions()
         try:
             options.page_load_strategy = 'eager'
         except Exception:
             pass
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument(f'--user-agent={_chrome_user_agent()}')
+        for arg in (
+            '--disable-blink-features=AutomationControlled',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            '--window-size=1920,1080',
+            f'--user-agent={_chrome_user_agent()}',
+        ):
+            options.add_argument(arg)
 
-        self._proxy_ext_dir: str | None = None
-
-        if self.proxy:
-            pinfo = _parse_proxy_url(self.proxy)
-            if pinfo['username'] and pinfo['password']:
-                zip_path = _make_proxy_auth_extension(
-                    pinfo['scheme'], pinfo['host'], pinfo['port'],
-                    pinfo['username'], pinfo['password'],
+        if self.user_data_dir:
+            try:
+                os.makedirs(self.user_data_dir, exist_ok=True)
+                _clean_stale_profile_locks(self.user_data_dir)
+                options.add_argument(f'--user-data-dir={self.user_data_dir}')
+                logger.info('Chrome профиль: %s', self.user_data_dir)
+            except OSError:
+                logger.warning(
+                    'Не удалось создать user-data-dir=%r, Chrome запустится с temp-профилем',
+                    self.user_data_dir,
                 )
-                self._proxy_ext_dir = os.path.dirname(zip_path)
-                options.add_extension(zip_path)
-                logger.info(
-                    'Прокси с авторизацией (расширение): %s://%s:%s',
-                    pinfo['scheme'], pinfo['host'], pinfo['port'],
-                )
-            else:
-                proxy_addr = f'{pinfo["scheme"]}://{pinfo["host"]}:{pinfo["port"]}'
-                options.add_argument(f'--proxy-server={proxy_addr}')
-                logger.info('Используется прокси (без auth): %s', self.proxy)
 
-        use_xvfb = self.headless and os.environ.get('DISPLAY')
+        self._attach_proxy(options)
+        return options
+
+    def _attach_proxy(self, options: Any) -> None:
+        self._proxy_ext_dir = None
+        if not self.proxy:
+            return
+        pinfo = _parse_proxy_url(self.proxy)
+        if pinfo['username'] and pinfo['password']:
+            zip_path = _make_proxy_auth_extension(
+                pinfo['scheme'], pinfo['host'], pinfo['port'],
+                pinfo['username'], pinfo['password'],
+            )
+            self._proxy_ext_dir = os.path.dirname(zip_path)
+            options.add_extension(zip_path)
+            logger.info(
+                'Прокси с авторизацией (расширение): %s://%s:%s',
+                pinfo['scheme'], pinfo['host'], pinfo['port'],
+            )
+        else:
+            proxy_addr = f'{pinfo["scheme"]}://{pinfo["host"]}:{pinfo["port"]}'
+            options.add_argument(f'--proxy-server={proxy_addr}')
+            logger.info('Используется прокси (без auth): %s', self.proxy)
+
+    def _build_driver(self) -> Any:
+        options = self._build_options()
+        use_xvfb = self.headless and bool(os.environ.get('DISPLAY'))
         use_headless = self.headless and not use_xvfb
 
         ver_main = _chrome_major_version()
@@ -247,7 +414,7 @@ class DNSParser:
             logger.info('undetected_chromedriver version_main=%s', ver_main)
         if use_xvfb:
             logger.info(
-                'Xvfb-режим: Chrome запущен как обычный браузер на виртуальном дисплее %s',
+                'Xvfb-режим: Chrome запущен на виртуальном дисплее %s',
                 os.environ['DISPLAY'],
             )
         elif use_headless:
@@ -255,7 +422,7 @@ class DNSParser:
             options.add_argument('--disable-software-rasterizer')
             logger.info('Headless-режим (без Xvfb)')
 
-        driver = self._uc.Chrome(**uc_kwargs)
+        driver = self._start_chrome_with_timeout(uc_kwargs)
         to = float(self.page_load_timeout)
         driver.set_page_load_timeout(to)
         try:
@@ -263,36 +430,70 @@ class DNSParser:
         except Exception:
             pass
         self._apply_driver_http_timeout(driver)
+
+        if self.start_minimized:
+            try:
+                driver.minimize_window()
+                logger.info('Окно Chrome свёрнуто')
+            except Exception:
+                logger.debug('Не удалось свернуть окно Chrome', exc_info=True)
+
+        return driver
+
+    def _start_chrome_with_timeout(self, uc_kwargs: dict[str, Any]) -> Any:
+        startup_timeout = int(getattr(settings, 'CHROME_STARTUP_TIMEOUT', 90))
+        result: dict[str, Any] = {}
+
+        def _target() -> None:
+            try:
+                result['driver'] = self._uc.Chrome(**uc_kwargs)
+            except BaseException as exc:
+                result['error'] = exc
+
+        th = threading.Thread(target=_target, name='uc-chrome-startup', daemon=True)
+        th.start()
+        th.join(timeout=startup_timeout)
+
+        if th.is_alive():
+            raise RuntimeError(
+                f'Chrome не стартовал за {startup_timeout}с. '
+                f'Обычно это значит, что предыдущий Chrome жив и держит профиль '
+                f'{self.user_data_dir!r}. Закройте все Chrome/chromedriver, '
+                f'удалите Singleton* из профиля и повторите.'
+            )
+        if 'error' in result:
+            raise result['error']
+        driver = result.get('driver')
+        if driver is None:
+            raise RuntimeError('Chrome стартовал, но драйвер не был получен')
         return driver
 
     def _apply_driver_http_timeout(self, driver: Any) -> None:
         try:
-            ce = driver.command_executor
-            cfg = getattr(ce, '_client_config', None)
+            cfg = getattr(driver.command_executor, '_client_config', None)
             if cfg is not None:
                 cfg.timeout = float(self.selenium_http_timeout)
         except Exception:
             logger.debug('Не удалось задать HTTP-таймаут клиента WebDriver', exc_info=True)
 
     def _driver_get(self, driver: Any, url: str) -> None:
-        te_mod = importlib.import_module('selenium.common.exceptions')
+        te = self._selenium_exceptions
         try:
             driver.get(url)
-        except te_mod.TimeoutException:
+        except te.TimeoutException:
             logger.warning(
-                'Таймаут загрузки страницы Chrome (%ss), останавливаем загрузку и продолжаем: %s',
-                self.page_load_timeout,
-                url,
+                'Таймаут загрузки страницы Chrome (%ss), останавливаем загрузку: %s',
+                self.page_load_timeout, url,
             )
             try:
                 driver.execute_script('window.stop();')
             except Exception:
                 pass
-        except te_mod.WebDriverException as exc:
+        except te.WebDriverException as exc:
             err = str(exc).lower()
             if 'err_connection_timed_out' in err or 'err_connection_reset' in err:
                 logger.error('Таймаут соединения: %s', url)
-            elif 'err_proxy' in err or 'proxy' in err and 'failed' in err:
+            elif 'err_proxy' in err or ('proxy' in err and 'failed' in err):
                 logger.error('Ошибка прокси: %s', url)
             raise
 
@@ -313,25 +514,30 @@ class DNSParser:
                 d.quit = _noop_chrome_quit
             except Exception:
                 pass
-        if getattr(self, '_proxy_ext_dir', None):
+        if self._proxy_ext_dir:
             try:
                 shutil.rmtree(self._proxy_ext_dir, ignore_errors=True)
             except Exception:
                 pass
             self._proxy_ext_dir = None
 
-    def __enter__(self) -> DNSParser:
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
-
     def _random_delay(self) -> None:
-        delay = random.uniform(self.delay_min, self.delay_max)
-        time.sleep(delay)
+        time.sleep(random.uniform(self.delay_min, self.delay_max))
+
+
+class DNSParser(ChromeDriverMixin, BaseParser):
+
+    def __init__(self) -> None:
+        self._init_chrome_runtime(
+            page_timeout_setting='DNS_PAGE_LOAD_TIMEOUT',
+            page_timeout_default=60,
+        )
+        self.catalog_element_wait = int(getattr(settings, 'DNS_CATALOG_ELEMENT_WAIT', 60))
+        self.catalog_scroll_max_rounds = int(getattr(settings, 'DNS_CATALOG_SCROLL_MAX_ROUNDS', 60))
+        self.catalog_scroll_stable = int(getattr(settings, 'DNS_CATALOG_SCROLL_STABLE', 5))
 
     def _check_dns_blocked(self, driver: Any) -> None:
-        te_mod = importlib.import_module('selenium.common.exceptions')
+        te = self._selenium_exceptions
         title = ''
         src = ''
         try:
@@ -339,20 +545,19 @@ class DNSParser:
             ps = driver.page_source
             if ps:
                 src = ps[:12000]
-        except (te_mod.NoSuchWindowException, te_mod.InvalidSessionIdException) as exc:
+        except (te.NoSuchWindowException, te.InvalidSessionIdException):
             logger.warning('Chrome: окно или сессия недоступны')
-            raise exc
+            raise
         except Exception:
             pass
         if _dns_page_blocked(title, src):
             raise DNSBlockedError(DNS_BLOCKED_MSG)
 
     def _navigate_dns_with_warmup(self, driver: Any, url: str) -> None:
-        cur = ''
         try:
             cur = driver.current_url or ''
         except Exception:
-            pass
+            cur = ''
         if 'dns-shop.ru' not in cur:
             try:
                 self._driver_get(driver, f'{DNS_BASE_URL}/')
@@ -363,8 +568,12 @@ class DNSParser:
         time.sleep(2)
         self._check_dns_blocked(driver)
 
-    def parse_category(self, dns_category_slug: str) -> list[ParsedProduct]:
-        url = f'{DNS_BASE_URL}/catalog/{dns_category_slug}/'
+    def parse_category(self, category_url: str) -> list[ParsedProduct]:
+        cu = (category_url or '').strip()
+        if cu.startswith('http'):
+            url = cu
+        else:
+            url = f'{DNS_BASE_URL}/catalog/{cu.strip("/")}/'
         logger.info('Парсинг категории: %s', url)
 
         for attempt in range(1, self.max_retries + 1):
@@ -381,8 +590,7 @@ class DNSParser:
                 if attempt < self.max_retries:
                     backoff = 2 ** attempt + random.uniform(0, 1)
                     if 'err_connection_timed_out' in str(exc).lower():
-                        extra = random.uniform(20.0, 45.0)
-                        backoff += extra
+                        backoff += random.uniform(20.0, 45.0)
                     logger.info('Повтор через %.1f сек.', backoff)
                     time.sleep(backoff)
 
@@ -401,46 +609,90 @@ class DNSParser:
             try:
                 logger.error(
                     'Нет .catalog-product за %ss: url=%s title=%r',
-                    self.catalog_element_wait,
-                    driver.current_url,
-                    driver.title,
+                    self.catalog_element_wait, driver.current_url, driver.title,
                 )
             except Exception:
                 pass
             raise
         self._random_delay()
-
         self._scroll_to_load_all(driver)
 
         product_elements = driver.find_elements(self._by.CLASS_NAME, 'catalog-product')
         logger.info('Найдено элементов на странице: %d', len(product_elements))
 
-        seen: dict[str, ParsedProduct] = {}
+        rows = self._extract_rows_via_js(driver)
+        if rows:
+            products = self._rows_to_parsed(rows)
+            logger.info('Карточки разобраны пакетом в браузере (JS), записей: %d', len(rows))
+        else:
+            products = self._extract_via_dom(product_elements)
 
+        if product_elements and not products:
+            try:
+                sample = (product_elements[0].text or '').strip().replace('\n', ' ')
+                sample = re.sub(r'\s+', ' ', sample)[:220]
+            except Exception:
+                sample = ''
+            logger.warning(
+                'Найдено %d карточек .catalog-product, но извлечь товары не удалось. '
+                'Возможно, изменилась вёрстка. Текст первой карточки: %r',
+                len(product_elements), sample,
+            )
+        return products
+
+    def _extract_rows_via_js(self, driver: Any) -> list[dict[str, Any]]:
+        try:
+            raw = driver.execute_script(_DNS_CATALOG_CARDS_EXTRACT_JS)
+        except Exception:
+            logger.warning('Пакетное извлечение DNS-карточек (JS) не удалось', exc_info=True)
+            return []
+        if not isinstance(raw, list):
+            return []
+        return [item for item in raw if isinstance(item, dict)]
+
+    @staticmethod
+    def _rows_to_parsed(rows: list[dict[str, Any]]) -> list[ParsedProduct]:
+        seen: dict[str, ParsedProduct] = {}
+        for row in rows:
+            url = (row.get('url') or '').strip()
+            name = (row.get('name') or '').strip()
+            if not url or not name:
+                continue
+            try:
+                price = int(row['price']) if row.get('price') is not None else None
+            except (TypeError, ValueError):
+                price = None
+            if price is None:
+                continue
+            op = row.get('old_price')
+            try:
+                old_price: int | None = int(op) if op is not None else None
+            except (TypeError, ValueError):
+                old_price = None
+            if url in seen:
+                continue
+            seen[url] = ParsedProduct(
+                name=name,
+                price=price,
+                url=url,
+                vendor_code=str(row.get('vendor_code') or ''),
+                image_url=str(row.get('image_url') or ''),
+                old_price=old_price,
+                is_available=bool(row.get('is_available', True)),
+            )
+        return list(seen.values())
+
+    def _extract_via_dom(self, product_elements: list[Any]) -> list[ParsedProduct]:
+        seen: dict[str, ParsedProduct] = {}
         for el in product_elements:
             try:
                 parsed = self._extract_product_from_element(el)
-                if parsed and parsed.url not in seen:
-                    seen[parsed.url] = parsed
             except Exception:
                 logger.debug('Не удалось извлечь товар из элемента', exc_info=True)
                 continue
-
-        products = list(seen.values())
-        logger.info('Уникальных товаров после парсинга: %d', len(products))
-        if product_elements and not products:
-            try:
-                sample_text = (product_elements[0].text or '').strip().replace('\n', ' ')
-                sample_text = re.sub(r'\s+', ' ', sample_text)[:220]
-            except Exception:
-                sample_text = ''
-            logger.warning(
-                'Найдено %d карточек .catalog-product, но не удалось извлечь ни одного товара. '
-                'Вероятно изменилась вёрстка карточки/цены. Пример текста первой карточки: %r',
-                len(product_elements),
-                sample_text,
-            )
-        return products
+            if parsed and parsed.url not in seen:
+                seen[parsed.url] = parsed
+        return list(seen.values())
 
     def _click_catalog_more(self, driver: Any) -> bool:
         for sel in (
@@ -457,11 +709,11 @@ class DNSParser:
             except Exception:
                 pass
         for label in ('Показать ещё', 'Показать еще', 'Показать больше'):
+            xp = (
+                f"//button[contains(normalize-space(.), '{label}')]"
+                f"|//a[contains(normalize-space(.), '{label}')]"
+            )
             try:
-                xp = (
-                    f"//button[contains(normalize-space(.), '{label}')]"
-                    f"|//a[contains(normalize-space(.), '{label}')]"
-                )
                 for el in driver.find_elements(self._by.XPATH, xp):
                     if el.is_displayed() and el.is_enabled():
                         driver.execute_script('arguments[0].click();', el)
@@ -470,7 +722,8 @@ class DNSParser:
                 pass
         return False
 
-    def _scroll_catalog_js(self, driver: Any) -> None:
+    @staticmethod
+    def _scroll_catalog_js(driver: Any) -> None:
         driver.execute_script(
             """
             var h = Math.max(
@@ -497,7 +750,7 @@ class DNSParser:
         stable = 0
         max_r = max(1, self.catalog_scroll_max_rounds)
         need_stable = max(1, self.catalog_scroll_stable)
-        for round_i in range(max_r):
+        for _ in range(max_r):
             prev = len(driver.find_elements(self._by.CLASS_NAME, 'catalog-product'))
             self._scroll_catalog_js(driver)
             time.sleep(random.uniform(1.0, 1.8))
@@ -516,19 +769,16 @@ class DNSParser:
             if stable >= need_stable:
                 logger.info(
                     'Подгрузка каталога завершена: карточек в DOM %s '
-                    '(%s раундов подряд без роста; на сайте может быть больше позиций '
-                    '«всего в разделе», чем карточек в выдаче).',
-                    cur,
-                    need_stable,
+                    '(%s раундов без роста подряд).',
+                    cur, need_stable,
                 )
-                break
-        else:
-            logger.warning(
-                'Достигнут лимит раундов прокрутки (%s), карточек в DOM: %s. '
-                'При необходимости увеличьте DNS_CATALOG_SCROLL_MAX_ROUNDS.',
-                max_r,
-                len(driver.find_elements(self._by.CLASS_NAME, 'catalog-product')),
-            )
+                return
+        logger.warning(
+            'Достигнут лимит раундов прокрутки (%s), карточек в DOM: %s. '
+            'При необходимости увеличьте DNS_CATALOG_SCROLL_MAX_ROUNDS.',
+            max_r,
+            len(driver.find_elements(self._by.CLASS_NAME, 'catalog-product')),
+        )
 
     def parse_product(self, product_url: str) -> ParsedProduct | None:
         logger.info('Парсинг товара: %s', product_url)
@@ -545,8 +795,7 @@ class DNSParser:
                 )
                 self.close()
                 if attempt < self.max_retries:
-                    backoff = 2 ** attempt + random.uniform(0, 1)
-                    time.sleep(backoff)
+                    time.sleep(2 ** attempt + random.uniform(0, 1))
 
         logger.error('Все попытки парсинга товара исчерпаны: %s', product_url)
         return None
@@ -564,16 +813,15 @@ class DNSParser:
         if not name:
             return None
 
-        price = self._extract_price(driver, 'product-buy__price')
+        price = self._extract_price_class(driver, 'product-buy__price')
         if price is None:
             return None
 
-        old_price = self._extract_price(driver, 'product-buy__prev')
+        old_price = self._extract_price_class(driver, 'product-buy__prev')
 
         vendor_code = ''
         try:
-            vc_el = driver.find_element(self._by.CLASS_NAME, 'product-card-top__code')
-            vc_text = vc_el.text.strip()
+            vc_text = driver.find_element(self._by.CLASS_NAME, 'product-card-top__code').text.strip()
             match = re.search(r'(\d+)', vc_text)
             if match:
                 vendor_code = match.group(1)
@@ -610,19 +858,16 @@ class DNSParser:
             return None
         name = (name_el.text or '').strip()
         link = name_el.get_attribute('href') or ''
-
         if not name or not link:
             return None
 
         price = None
         for cls in ('product-buy__price', 'catalog-product__price', 'ui-kit-price__main'):
-            price = self._extract_price_from_element(el, cls)
+            price = self._extract_price_class(el, cls)
             if price is not None:
                 break
         if price is None:
-            # Резервный вариант: ищем любой блок с символом рубля в тексте карточки.
-            candidates = el.find_elements(self._by.XPATH, ".//*[contains(text(),'₽')]")
-            for c in candidates:
+            for c in el.find_elements(self._by.XPATH, ".//*[contains(text(),'₽')]"):
                 price = self._clean_price(c.text or c.get_attribute('textContent') or '')
                 if price is not None:
                     break
@@ -631,8 +876,7 @@ class DNSParser:
 
         old_price = None
         for cls in ('product-buy__prev', 'catalog-product__old-price', 'ui-kit-price__old'):
-            old_price = self._extract_price_from_element(el, cls)
-          
+            old_price = self._extract_price_class(el, cls)
             if old_price is not None:
                 break
 
@@ -652,6 +896,14 @@ class DNSParser:
         except Exception:
             pass
 
+        try:
+            card_text_low = (el.text or '')[:4000].lower()
+        except Exception:
+            card_text_low = ''
+        is_available = (
+            'нет в наличии' not in card_text_low
+            and 'снят с производства' not in card_text_low
+        )
         return ParsedProduct(
             name=name,
             price=price,
@@ -659,6 +911,7 @@ class DNSParser:
             vendor_code=vendor_code,
             image_url=image_url,
             old_price=old_price,
+            is_available=is_available,
         )
 
     @staticmethod
@@ -670,38 +923,23 @@ class DNSParser:
                 continue
         return None
 
-    @staticmethod
-    def _extract_price(driver: Any, class_name: str) -> int | None:
+    def _extract_price_class(self, parent: Any, class_name: str) -> int | None:
         try:
-            by = importlib.import_module('selenium.webdriver.common.by').By
-            el = driver.find_element(by.CLASS_NAME, class_name)
-            return DNSParser._clean_price(el.get_attribute('textContent'))
-        except Exception:
-            return None
-
-    @staticmethod
-    def _extract_price_from_element(parent: Any, class_name: str) -> int | None:
-        try:
-            by = importlib.import_module('selenium.webdriver.common.by').By
-            el = parent.find_element(by.CLASS_NAME, class_name)
-            return DNSParser._clean_price(el.get_attribute('textContent'))
+            el = parent.find_element(self._by.CLASS_NAME, class_name)
+            return self._clean_price(el.get_attribute('textContent'))
         except Exception:
             return None
 
     @staticmethod
     def _clean_price(raw: str) -> int | None:
-        cleaned = raw.split('₽')[0].strip()
+        cleaned = (raw or '').split('₽')[0]
         cleaned = re.sub(r'\s+', '', cleaned)
         cleaned = re.sub(r'[^\d]', '', cleaned)
-        if cleaned.isdigit():
-            return int(cleaned)
-        return None
+        return int(cleaned) if cleaned.isdigit() else None
 
-    @staticmethod
-    def _safe_text(driver: Any, class_name: str) -> str:
+    def _safe_text(self, driver: Any, class_name: str) -> str:
         try:
-            by = importlib.import_module('selenium.webdriver.common.by').By
-            el = driver.find_element(by.CLASS_NAME, class_name)
+            el = driver.find_element(self._by.CLASS_NAME, class_name)
             return el.text.strip()
         except Exception:
             return ''

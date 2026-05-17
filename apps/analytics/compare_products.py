@@ -1,7 +1,3 @@
-"""Сравнение двух и более товаров в табличной форме.
-
-Сводка: текущая цена, мин/макс/средняя за период, тренд, прогноз (если есть).
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -33,7 +29,6 @@ class ProductSummary:
 
 
 def compare(product_ids: list[int], days: int = 30) -> list[ProductSummary]:
-    """Сводка по нескольким товарам для сравнения."""
     since = timezone.now() - _dt.timedelta(days=days)
     results: list[ProductSummary] = []
 

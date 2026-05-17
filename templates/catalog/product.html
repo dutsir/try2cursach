@@ -1,0 +1,254 @@
+{% extends 'catalog/base.html' %}
+{% load humanize %}
+
+{% block title %}{{ product.name }} — Price Monitor{% endblock %}
+
+{% block extra_head %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@3.6.0/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <div class="breadcrumb">
+        <a href="{% url 'catalog:index' %}">Каталог</a> /
+        <a href="{% url 'catalog:category' product.category.slug %}">{{ product.category.name }}</a>
+    </div>
+
+    <div class="prod-header">
+        {% if product.image_url %}
+            <img src="{{ product.image_url }}" alt="">
+        {% endif %}
+        <div class="info">
+            <h1 style="margin-top:0;">{{ product.name }}</h1>
+            {% if product.vendor_code %}
+                <div class="muted">Артикул: {{ product.vendor_code }}</div>
+            {% endif %}
+            <div class="summary-best">
+                {% if best_price %}
+                    Цена от <span class="price">{{ best_price|floatformat:0|intcomma }} ₽</span>
+                {% else %}
+                    <span class="muted">Цена пока не собрана</span>
+                {% endif %}
+            </div>
+
+            {% if stats.history_points %}
+                <div class="pstats">
+                    {% if stats.is_min_all_time %}
+                        <span class="pstats__badge pstats__badge--good">Минимум за всё время</span>
+                    {% elif stats.is_min_30d %}
+                        <span class="pstats__badge pstats__badge--good">Минимум за 30 дней</span>
+                    {% endif %}
+                    {% if stats.drop_alert %}
+                        <span class="pstats__badge pstats__badge--warn">
+                            Упала на {{ stats.drop_alert_pct|floatformat:1 }}% за сутки
+                        </span>
+                    {% endif %}
+
+                    <dl class="pstats__grid">
+                        {% if stats.min_price %}
+                            <div>
+                                <dt>Мин. за всё время</dt>
+                                <dd>{{ stats.min_price|floatformat:0|intcomma }} ₽
+                                    <span class="muted">{{ stats.min_date|date:"d.m.Y" }}</span>
+                                </dd>
+                            </div>
+                        {% endif %}
+                        {% if stats.max_price %}
+                            <div>
+                                <dt>Макс. за всё время</dt>
+                                <dd>{{ stats.max_price|floatformat:0|intcomma }} ₽
+                                    <span class="muted">{{ stats.max_date|date:"d.m.Y" }}</span>
+                                </dd>
+                            </div>
+                        {% endif %}
+                        {% if stats.avg_30d %}
+                            <div>
+                                <dt>Средняя за 30 дней</dt>
+                                <dd>{{ stats.avg_30d|floatformat:0|intcomma }} ₽</dd>
+                            </div>
+                        {% endif %}
+                        {% if stats.delta_7d_pct is not None %}
+                            <div>
+                                <dt>Изменение за 7 дней</dt>
+                                <dd class="{% if stats.delta_7d_pct < 0 %}pstats__delta--down{% elif stats.delta_7d_pct > 0 %}pstats__delta--up{% endif %}">
+                                    {% if stats.delta_7d_pct > 0 %}+{% endif %}{{ stats.delta_7d_pct|floatformat:1 }}%
+                                </dd>
+                            </div>
+                        {% endif %}
+                        {% if stats.delta_30d_pct is not None %}
+                            <div>
+                                <dt>Изменение за 30 дней</dt>
+                                <dd class="{% if stats.delta_30d_pct < 0 %}pstats__delta--down{% elif stats.delta_30d_pct > 0 %}pstats__delta--up{% endif %}">
+                                    {% if stats.delta_30d_pct > 0 %}+{% endif %}{{ stats.delta_30d_pct|floatformat:1 }}%
+                                </dd>
+                            </div>
+                        {% endif %}
+                    </dl>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <h2>Сравнение по магазинам</h2>
+    {% if offer_rows %}
+        <table class="offers">
+            <thead>
+                <tr>
+                    <th>Магазин</th>
+                    <th>Артикул</th>
+                    <th>Цена</th>
+                    <th>Доступность</th>
+                    <th>Обновлено</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for r in offer_rows %}
+                <tr>
+                    <td>
+                        <span class="badge src-{{ r.offer.source }}">{{ r.offer.get_source_display }}</span>
+                    </td>
+                    <td>
+                        {{ r.offer.vendor_code|default:"—" }}
+                        {% if r.alt_count %}
+                            <span class="muted" style="font-size:11px; display:block;">
+                                +{{ r.alt_count }} вариант{{ r.alt_count|pluralize:"ов,ов" }} на сайте
+                            </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if r.price %}
+                            <span class="price">{{ r.price|floatformat:0|intcomma }} ₽</span>
+                            {% if r.old_price %}
+                                <span class="price-old">{{ r.old_price|floatformat:0|intcomma }} ₽</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if r.offer.is_available %}
+                            <span class="avail">● в наличии</span>
+                        {% else %}
+                            <span class="unavail">● нет</span>
+                        {% endif %}
+                    </td>
+                    <td class="muted" style="font-size:12px;">
+                        {% if r.last_timestamp %}{{ r.last_timestamp|date:"d.m.Y H:i" }}{% else %}—{% endif %}
+                    </td>
+                    <td>
+                        <a class="btn" href="{{ r.offer.url }}" target="_blank" rel="noopener">В магазин</a>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="empty">Офферов пока нет.</div>
+    {% endif %}
+
+    {% if chart_series %}
+        <h2>История цен</h2>
+        <div class="card">
+            <canvas id="price-chart"></canvas>
+        </div>
+        {{ chart_series|json_script:"chart-data" }}
+        <script id="chart-overlays" type="application/json">
+            {
+                "avg_30d": {{ stats.avg_30d|default_if_none:"null" }},
+                "min_price": {{ stats.min_price|default_if_none:"null" }},
+                "min_date": "{{ stats.min_date|date:"c" }}",
+                "max_price": {{ stats.max_price|default_if_none:"null" }},
+                "max_date": "{{ stats.max_date|date:"c" }}"
+            }
+        </script>
+        <script>
+            (function () {
+                const raw = JSON.parse(document.getElementById('chart-data').textContent);
+                const overlays = JSON.parse(document.getElementById('chart-overlays').textContent);
+                const colors = {
+                    dns: '#d97706',
+                    citilink: '#16a34a',
+                    ozon: '#4f46e5',
+                };
+                const datasets = raw.map(function (s) {
+                    return {
+                        label: s.name,
+                        data: s.points.map(function (p) { return { x: p.ts, y: p.price }; }),
+                        borderColor: colors[s.source] || '#2563eb',
+                        backgroundColor: (colors[s.source] || '#2563eb') + '33',
+                        tension: 0.25,
+                        pointRadius: 2,
+                        borderWidth: 2,
+                    };
+                });
+
+                const allPoints = raw.reduce(function (acc, s) { return acc.concat(s.points); }, []);
+                if (overlays.avg_30d && allPoints.length > 0) {
+                    allPoints.sort(function (a, b) { return new Date(a.ts) - new Date(b.ts); });
+                    datasets.push({
+                        label: 'Средняя за 30 дней',
+                        data: [
+                            { x: allPoints[0].ts, y: overlays.avg_30d },
+                            { x: allPoints[allPoints.length - 1].ts, y: overlays.avg_30d },
+                        ],
+                        borderColor: '#9ca3af',
+                        borderDash: [6, 4],
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0,
+                    });
+                }
+
+                if (overlays.min_price && overlays.min_date) {
+                    datasets.push({
+                        label: 'Минимум',
+                        data: [{ x: overlays.min_date, y: overlays.min_price }],
+                        borderColor: '#16a34a',
+                        backgroundColor: '#16a34a',
+                        pointRadius: 6,
+                        pointHoverRadius: 8,
+                        showLine: false,
+                    });
+                }
+                if (overlays.max_price && overlays.max_date) {
+                    datasets.push({
+                        label: 'Максимум',
+                        data: [{ x: overlays.max_date, y: overlays.max_price }],
+                        borderColor: '#dc2626',
+                        backgroundColor: '#dc2626',
+                        pointRadius: 6,
+                        pointHoverRadius: 8,
+                        showLine: false,
+                    });
+                }
+
+                new Chart(document.getElementById('price-chart'), {
+                    type: 'line',
+                    data: { datasets: datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        parsing: false,
+                        scales: {
+                            x: { type: 'time', time: { unit: 'day' } },
+                            y: { beginAtZero: false, ticks: { callback: function(v){ return v.toLocaleString('ru-RU') + ' ₽'; } } }
+                        },
+                        plugins: {
+                            legend: { position: 'top' },
+                            tooltip: {
+                                callbacks: {
+                                    label: function (ctx) {
+                                        return ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString('ru-RU') + ' ₽';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            })();
+        </script>
+    {% endif %}
+{% endblock %}

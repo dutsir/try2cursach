@@ -1,8 +1,3 @@
-"""Прогноз цен с использованием ARIMA (statsmodels).
-
-Для каждого товара строит прогноз на horizon дней с доверительными
-интервалами и сохраняет результаты в PriceForecast.
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -25,7 +20,6 @@ def forecast_product(
     horizon: int = 7,
     order: tuple[int, int, int] = (1, 1, 1),
 ) -> list[PriceForecast]:
-    """ARIMA-прогноз для товара. Возвращает список созданных PriceForecast."""
     from statsmodels.tsa.arima.model import ARIMA
 
     records = list(
@@ -117,7 +111,6 @@ def forecast_for_product_ids(
     product_ids: list[int],
     horizon: int = 7,
 ) -> dict:
-    """Прогноз только для указанных товаров (после ручного парсинга)."""
     if not product_ids:
         return {'forecasts_created': 0, 'errors': 0}
 

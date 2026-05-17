@@ -34,3 +34,24 @@ Thumbs.db
 *.dump
 *.sql
 !docs/**/*.sql
+
+# Локальные профили Chrome (Qrator/Ozon cookies) — не коммитить
+var/
+
+# Кэш тестов и IDE-артефакты
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Claude / Cursor worktrees (локальные копии, не часть проекта)
+.claude/
+
+
+*.md
+# Модели sentence-transformers (скачиваются при первом rebuild_embeddings)
+.cache/
+models/
+

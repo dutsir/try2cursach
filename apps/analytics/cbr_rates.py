@@ -1,8 +1,3 @@
-"""Получение курсов валют от ЦБ РФ (официальный XML API).
-
-Не требует внешних библиотек — использует requests + xml.etree.
-API: https://www.cbr.ru/scripts/XML_daily.asp?date_req=DD/MM/YYYY
-"""
 from __future__ import annotations
 
 import datetime as _dt
@@ -26,7 +21,6 @@ CURRENCY_CHARCODE_MAP = {
 
 
 def fetch_cbr_rates(date: _dt.date | None = None) -> dict[str, Decimal]:
-    """Возвращает {code: rate_to_rub} для поддерживаемых валют."""
     target = date or _dt.date.today()
     params = {'date_req': target.strftime('%d/%m/%Y')}
     resp = requests.get(CBR_URL, params=params, timeout=15)
@@ -49,7 +43,6 @@ def fetch_cbr_rates(date: _dt.date | None = None) -> dict[str, Decimal]:
 
 
 def save_rates_for_date(date: _dt.date | None = None) -> int:
-    """Загружает курсы ЦБ за дату и сохраняет в БД. Возвращает число новых записей."""
     target = date or _dt.date.today()
     rates = fetch_cbr_rates(target)
     created = 0
@@ -66,7 +59,6 @@ def save_rates_for_date(date: _dt.date | None = None) -> int:
 
 
 def backfill_rates(days: int = 90) -> int:
-    """Загружает курсы за последние N дней (для инициализации)."""
     total = 0
     today = _dt.date.today()
     for i in range(days):

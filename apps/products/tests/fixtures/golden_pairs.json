@@ -1,0 +1,328 @@
+{
+  "_doc": "Golden pairs для регрессионных тестов матчера. Каждый кейс — пара (a, b) и ожидание ('must_merge' | 'must_not_merge' | 'must_review'). Изменять кейсы — только осознанно: они определяют поведение продакшен-матчинга.",
+  "must_merge": [
+    {
+      "id": "lenovo_thinkpad_e16_g2_dns_citilink",
+      "a": {
+        "name": "Lenovo ThinkPad E16 G2 21M6S1F000_32G",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "21M6S1F000",
+        "url": "https://www.dns-shop.ru/product/abc/lenovo-thinkpad-e16-g2/"
+      },
+      "b": {
+        "name": "Ноутбук Lenovo ThinkPad E16 G2 [21m6s1f000_32g]",
+        "source": "citilink",
+        "category": "noutbuki",
+        "sku": "1933481",
+        "url": "https://www.citilink.ru/product/noutbuk-lenovo-thinkpad-e16-g2-1933481/"
+      },
+      "comment": "Один и тот же MPN в скобках citilink + явный SKU у DNS"
+    },
+    {
+      "id": "macbook_pro_mkgt3rua",
+      "a": {
+        "name": "Apple MacBook Pro 16 MKGT3RU/A",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "MKGT3RU/A",
+        "url": "https://www.dns-shop.ru/product/dns/apple-macbook-pro-16/"
+      },
+      "b": {
+        "name": "Ноутбук Apple MacBook Pro 16\" [mkgt3ru/a]",
+        "source": "citilink",
+        "category": "noutbuki",
+        "sku": "",
+        "url": "https://www.citilink.ru/product/macbook-pro-16/"
+      }
+    },
+    {
+      "id": "asus_vivobook_mpn_match_dns_citilink",
+      "a": {
+        "name": "ASUS Vivobook 17 X1704VA-AU982 16\" Core 5 16GB 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "X1704VA-AU982",
+        "url": "https://www.dns-shop.ru/product/x1704va-au982/"
+      },
+      "b": {
+        "name": "Ноутбук ASUS Vivobook 17 [x1704va-au982] 16ГБ 512ГБ SSD",
+        "source": "citilink",
+        "category": "noutbuki",
+        "sku": "",
+        "url": "https://www.citilink.ru/product/asus-x1704va-au982/"
+      }
+    },
+    {
+      "id": "huawei_matebook_d16_dns_citilink",
+      "a": {
+        "name": "HUAWEI MateBook D 16 MCLG-X 16\" 16ГБ 512ГБ SSD Core 5 12450H",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "MCLG-X",
+        "url": "https://www.dns-shop.ru/product/mclg-x/"
+      },
+      "b": {
+        "name": "Ноутбук HUAWEI MateBook D 16 [mclg-x] 16ГБ DDR5 512ГБ SSD",
+        "source": "citilink",
+        "category": "noutbuki",
+        "sku": "",
+        "url": "https://www.citilink.ru/product/huawei-mclg-x/"
+      }
+    },
+    {
+      "id": "rtx_4070_palit_mpn_match",
+      "a": {
+        "name": "Видеокарта Palit GeForce RTX 4070 Dual 12GB NE64070019K9-1043D",
+        "source": "dns",
+        "category": "videokarty",
+        "sku": "NE64070019K9-1043D",
+        "url": "https://www.dns-shop.ru/product/ne64070019k9-1043d/"
+      },
+      "b": {
+        "name": "Видеокарта Palit GeForce RTX 4070 Dual 12 ГБ [ne64070019k9-1043d]",
+        "source": "citilink",
+        "category": "videokarty",
+        "sku": "",
+        "url": "https://www.citilink.ru/product/palit-rtx-4070-dual/"
+      }
+    },
+    {
+      "id": "rtx_5070_msi_gaming_trio",
+      "a": {
+        "name": "MSI GeForce RTX 5070 Gaming Trio OC 12G G507GTOC",
+        "source": "dns",
+        "category": "videokarty",
+        "sku": "G507GTOC",
+        "url": "https://www.dns-shop.ru/product/g507gtoc/"
+      },
+      "b": {
+        "name": "MSI GeForce RTX 5070 Gaming Trio OC 12ГБ [g507gtoc]",
+        "source": "citilink",
+        "category": "videokarty",
+        "sku": "",
+        "url": "https://www.citilink.ru/product/msi-rtx-5070/"
+      }
+    }
+  ],
+  "must_not_merge": [
+    {
+      "id": "thinkpad_e16_diff_ram",
+      "a": {
+        "name": "Lenovo ThinkPad E16 G2 21M6S1F000_32G 16\" 32GB DDR5 1TB SSD",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "21M6S1F000_32G",
+        "url": "https://www.dns-shop.ru/product/thinkpad-32gb/"
+      },
+      "b": {
+        "name": "Lenovo ThinkPad E16 G2 21M6S1F000_16G 16\" 16GB DDR5 512GB SSD",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "21M6S1F000_16G",
+        "url": "https://www.dns-shop.ru/product/thinkpad-16gb/"
+      },
+      "comment": "Похожая линейка, но разный RAM в названии — конфигурации разные"
+    },
+    {
+      "id": "matebook_d_diff_diagonal",
+      "a": {
+        "name": "HUAWEI MateBook D 16 16\" Core 5 16GB 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "MCLG-X",
+        "url": "https://www.dns-shop.ru/product/matebook-d-16/"
+      },
+      "b": {
+        "name": "HUAWEI MateBook D 14 14\" Core 5 16GB 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "MCLF-X",
+        "url": "https://www.dns-shop.ru/product/matebook-d-14/"
+      },
+      "comment": "Разная диагональ — это разные продуктовые линейки"
+    },
+    {
+      "id": "vivobook_mpn_au982_vs_au111",
+      "a": {
+        "name": "ASUS Vivobook 17 X1704VA-AU982 16GB 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "X1704VA-AU982",
+        "url": "https://www.dns-shop.ru/product/au982/"
+      },
+      "b": {
+        "name": "ASUS Vivobook 17 X1704VA-AU111 16GB 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "X1704VA-AU111",
+        "url": "https://www.dns-shop.ru/product/au111/"
+      },
+      "comment": "Разные MPN — разные модели"
+    },
+    {
+      "id": "rtx_4070_vs_rtx_4060",
+      "a": {
+        "name": "Palit GeForce RTX 4070 Dual 12GB",
+        "source": "dns",
+        "category": "videokarty",
+        "sku": "PA-RTX4070",
+        "url": "https://www.dns-shop.ru/product/palit-4070/"
+      },
+      "b": {
+        "name": "Palit GeForce RTX 4060 Dual 8GB",
+        "source": "dns",
+        "category": "videokarty",
+        "sku": "PA-RTX4060",
+        "url": "https://www.dns-shop.ru/product/palit-4060/"
+      },
+      "comment": "Разные GPU-семейства"
+    },
+    {
+      "id": "thinkpad_diff_storage",
+      "a": {
+        "name": "Lenovo ThinkPad T14 16GB 256GB SSD",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "T14-256",
+        "url": "https://www.dns-shop.ru/product/t14-256/"
+      },
+      "b": {
+        "name": "Lenovo ThinkPad T14 16GB 1TB SSD",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "T14-1024",
+        "url": "https://www.dns-shop.ru/product/t14-1024/"
+      },
+      "comment": "Разный объём накопителя (256GB vs 1024GB) — разные конфигурации"
+    },
+    {
+      "id": "wrong_brand",
+      "a": {
+        "name": "ASUS Vivobook 17 X1704VA-AU982 16GB 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "X1704VA-AU982",
+        "url": "https://www.dns-shop.ru/product/asus-vivobook/"
+      },
+      "b": {
+        "name": "Acer Aspire 17 X1704VA-AU982 16GB 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "ACER-X1704",
+        "url": "https://www.dns-shop.ru/product/acer-aspire/"
+      },
+      "comment": "Совпало бы по MPN, но бренды разные — должны быть разделены"
+    },
+    {
+      "id": "different_categories",
+      "a": {
+        "name": "ASUS Vivobook 17 X1704VA-AU982",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "X1704VA-AU982",
+        "url": "https://www.dns-shop.ru/product/asus-vivobook-17/"
+      },
+      "b": {
+        "name": "ASUS Vivobook 17 X1704VA-AU982",
+        "source": "dns",
+        "category": "videokarty",
+        "sku": "X1704VA-AU982-GPU",
+        "url": "https://www.dns-shop.ru/product/some-other/"
+      },
+      "comment": "Совпало бы по всему, но разные категории — hard reject"
+    }
+  ],
+  "must_review": [
+    {
+      "id": "ozon_dns_v3607vm_no_mpn",
+      "a": {
+        "name": "asus v3607vm rp090 ноутбук 16 intel core 5 210h ram 16 gb ssd 512 gb",
+        "source": "ozon",
+        "category": "noutbuki",
+        "sku": "",
+        "url": "https://www.ozon.ru/product/asus-v3607vm-15692-1234567/"
+      },
+      "b": {
+        "name": "ASUS V3607VM-RP090, 16\", Core 5 210H, 16GB, 512GB",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "V3607VM-RP090",
+        "url": "https://www.dns-shop.ru/product/v3607vm-rp090/"
+      },
+      "comment": "Ozon без MPN-в-скобках; нужно подтверждение человеком"
+    },
+    {
+      "id": "huawei_matebook_d16_specs_match_no_mpn",
+      "a": {
+        "name": "ноутбук huawei matebook d 16 16 ddr5 16гб 512 ssd intel core 5 серый",
+        "source": "ozon",
+        "category": "noutbuki",
+        "sku": "",
+        "url": "https://www.ozon.ru/product/matebook-d-16-12345/"
+      },
+      "b": {
+        "name": "HUAWEI MateBook D 16 MCLG-X 16\" Core 5 16GB 512GB Space Gray",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "MCLG-X",
+        "url": "https://www.dns-shop.ru/product/matebook-d16-mclg-x/"
+      },
+      "comment": "Specs совпадают, но MPN у Ozon нет — review, не auto"
+    },
+    {
+      "id": "ozon_thinkpad_no_mpn",
+      "a": {
+        "name": "ноутбук lenovo thinkpad e16 g2 16 ram 32 ssd 1024",
+        "source": "ozon",
+        "category": "noutbuki",
+        "sku": "",
+        "url": "https://www.ozon.ru/product/thinkpad-15692/"
+      },
+      "b": {
+        "name": "Lenovo ThinkPad E16 G2 21M6S1F000 32GB DDR5 1TB SSD 16\"",
+        "source": "dns",
+        "category": "noutbuki",
+        "sku": "21M6S1F000",
+        "url": "https://www.dns-shop.ru/product/thinkpad-21m6/"
+      },
+      "comment": "Specs полные, но Ozon mpn не дал — review"
+    }
+  ],
+  "extract_brand": [
+    {"name": "ASUS Vivobook 17", "expected": "asus"},
+    {"name": "asus rog strix", "expected": "asus"},
+    {"name": "Леново ThinkPad", "expected": "lenovo"},
+    {"name": "Lenovo Legion Pro 5", "expected": "lenovo"},
+    {"name": "Apple MacBook Pro 16", "expected": "apple"},
+    {"name": "huawei matebook d 16", "expected": "huawei"},
+    {"name": "DELL Inspiron 15", "expected": "dell"},
+    {"name": "MSI Katana 17", "expected": "msi"},
+    {"name": "Хуавей MateBook D 14", "expected": "huawei"},
+    {"name": "что-то без бренда", "expected": ""},
+    {"name": "Fractal Design Define 7", "expected": "fractal design"},
+    {"name": "Be Quiet! Pure Base 500", "expected": "be quiet!"}
+  ],
+  "extract_mpn": [
+    {"name": "Ноутбук Lenovo ThinkPad E16 G2 [21m6s1f000_32g]", "expected_mpn": "21M6S1F000_32G", "expected_source": "bracket"},
+    {"name": "Apple MacBook Pro 16\" [mkgt3ru/a]", "expected_mpn": "MKGT3RU/A", "expected_source": "bracket"},
+    {"name": "ASUS ROG Strix 90NR0LF1-M000P0 16\" Core 7", "expected_mpn": "90NR0LF1-M000P0", "expected_source": "name"},
+    {"name": "ASUS Vivobook 17 X1704VA-AU982", "expected_mpn": "X1704VA-AU982", "expected_source": "name"},
+    {"name": "Ноутбук без артикула", "expected_mpn": "", "expected_source": ""},
+    {"name": "Получите 1500 баллов за отзыв", "expected_mpn": "", "expected_source": ""}
+  ],
+  "extract_specs": [
+    {"name": "16ГБ DDR5 RAM Core 5", "expected": {"ram_gb": 16, "cpu_family": "core 5"}},
+    {"name": "16 GB DDR4 ОЗУ", "expected": {"ram_gb": 16}},
+    {"name": "16Gb DDR4 RAM", "expected": {"ram_gb": 16}},
+    {"name": "1ТБ SSD NVMe", "expected": {"storage_gb": 1024}},
+    {"name": "512ГБ SSD M.2", "expected": {"storage_gb": 512}},
+    {"name": "256GB NVMe", "expected": {"storage_gb": 256}},
+    {"name": "Ноутбук 15.6\" FHD", "expected": {"screen_in": "15.6"}},
+    {"name": "Монитор 16\" IPS", "expected": {"screen_in": "16"}},
+    {"name": "MacBook 16,2\" M4 Pro", "expected": {"screen_in": "16.2"}},
+    {"name": "Получите 1500 баллов за отзыв на ноутбук", "expected": {}},
+    {"name": "ASUS RTX 4070 Dual 12GB GPU", "expected": {"gpu_family": "rtx 4070"}},
+    {"name": "Apple MacBook Pro M4 Pro 2024", "expected": {"cpu_family": "apple m4", "year": 2024}}
+  ]
+}

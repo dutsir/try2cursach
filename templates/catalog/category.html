@@ -1,0 +1,75 @@
+{% extends 'catalog/base.html' %}
+{% load humanize %}
+
+{% block title %}{{ category.name }} — Price Monitor{% endblock %}
+
+{% block content %}
+    <div class="breadcrumb">
+        <a href="{% url 'catalog:index' %}">Каталог</a>
+        {% for a in ancestors %}
+            / <a href="{% url 'catalog:category' a.slug %}">{{ a.name }}</a>
+        {% endfor %}
+        / {{ category.name }}
+    </div>
+
+    <h1>{{ category.name }}</h1>
+
+    {% if is_group %}
+        <p class="muted">Подкатегории раздела «{{ category.name }}».</p>
+        <div class="grid" style="margin-top: 14px;">
+            {% for ch in children %}
+                <a class="cat-card" href="{% url 'catalog:category' ch.obj.slug %}">
+                    <div class="name">{{ ch.obj.name }}</div>
+                    <div class="count">{{ ch.count }} товаров</div>
+                </a>
+            {% endfor %}
+        </div>
+    {% else %}
+    <p class="muted">Показаны товары, отсортированные по минимальной цене среди магазинов.</p>
+
+    {% if rows %}
+        <table class="products" style="margin-top: 14px;">
+            <thead>
+                <tr>
+                    <th style="width: 60px;"></th>
+                    <th>Товар</th>
+                    <th style="width: 150px;">Лучшая цена</th>
+                    <th style="width: 120px;">Магазинов</th>
+                    <th style="width: 120px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for r in rows %}
+                <tr>
+                    <td>
+                        {% if r.product.image_url %}
+                            <img src="{{ r.product.image_url }}" alt="" style="width:48px;height:48px;object-fit:contain;">
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'catalog:product' r.product.slug %}">{{ r.product.name }}</a>
+                        {% if r.product.vendor_code %}
+                            <div class="muted" style="font-size:12px;">арт.: {{ r.product.vendor_code }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if r.best_price %}
+                            <div class="price">{{ r.best_price|floatformat:0|intcomma }} ₽</div>
+                            <div class="muted" style="font-size:12px;">{{ r.best_source }}</div>
+                        {% else %}
+                            <span class="muted">нет цены</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ r.offers_count }}</td>
+                    <td>
+                        <a class="btn" href="{% url 'catalog:product' r.product.slug %}">Сравнить</a>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="empty">В категории пока нет товаров. Запустите парсинг.</div>
+    {% endif %}
+    {% endif %}
+{% endblock %}

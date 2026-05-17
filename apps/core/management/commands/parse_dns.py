@@ -6,7 +6,7 @@ from typing import Any
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandParser
 
-from apps.products.models import Category
+from apps.products.models import Category, CategoryListing
 from apps.prices.parsers import DNSParser
 from apps.prices.tasks import parse_category_with_parser, task_parse_category
 
@@ -56,8 +56,22 @@ class Command(BaseCommand):
         else:
             categories = Category.objects.filter(is_active=True)
 
+        categories = (
+            categories.filter(
+                listings__source=CategoryListing.Source.DNS,
+                listings__is_active=True,
+            )
+            .exclude(listings__external_path='')
+            .distinct()
+        )
+
         if not categories.exists():
-            self.stderr.write(self.style.ERROR('Активные категории не найдены'))
+            self.stderr.write(
+                self.style.ERROR(
+                    'Нет категорий с активной привязкой DNS. '
+                    'В админке у категории добавьте строку «Каталоги у магазинов»: магазин DNS и slug каталога.'
+                )
+            )
             settings.CHROME_HEADLESS = prev_headless
             return
 

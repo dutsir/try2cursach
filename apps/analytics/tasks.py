@@ -36,7 +36,6 @@ def task_detect_all_anomalies() -> dict:
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=60, max_retries=3)
 def task_fetch_currency_rates(self) -> dict:
-    """Один раз в день достаточно: у ЦБ РФ один официальный курс на дату."""
     from .cbr_rates import save_rates_for_date
     created = save_rates_for_date()
     return {'created': created}
@@ -44,7 +43,6 @@ def task_fetch_currency_rates(self) -> dict:
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=300, max_retries=1)
 def task_forecast_all_products(self) -> dict:
-    """Полный прогноз ARIMA по всем активным товарам. Тяжёлая задача — в beat раз в неделю."""
     from .forecasting import forecast_all
 
     return forecast_all()
@@ -52,7 +50,6 @@ def task_forecast_all_products(self) -> dict:
 
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=120, max_retries=1)
 def task_save_analytics_dashboard_snapshot(self) -> dict:
-    """Сохраняет полный снимок агрегированной аналитики в AnalyticsSnapshot (для дашборда / истории)."""
     from .snapshots import save_full_dashboard_snapshot
 
     snap = save_full_dashboard_snapshot()

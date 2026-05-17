@@ -35,7 +35,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('Для товара пока нет истории цен.'))
             return
 
-        rows.reverse()  # Показываем в хронологическом порядке: старые -> новые
+        rows.reverse()
 
         self.stdout.write(f'Товар: {product.name}')
         self.stdout.write(f'URL: {product.url}')

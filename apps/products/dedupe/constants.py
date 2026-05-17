@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+from django.conf import settings
+
+
+AUTO_MERGE_THRESHOLD: float = float(
+    getattr(settings, 'DEDUP_AUTO_MERGE_THRESHOLD', 0.85),
+)
+
+
+REVIEW_THRESHOLD: float = float(
+    getattr(settings, 'DEDUP_REVIEW_THRESHOLD', 0.65),
+)
+
+
+WEIGHTS: dict[str, float] = {
+    'brand': 0.35,
+    'model_code': 0.30,
+    'screen_in': 0.15,
+    'ram_gb': 0.10,
+    'storage_gb': 0.10,
+    'cpu_family': 0.07,
+    'gpu_family': 0.05,
+}
+
+
+NAME_DICE_WEIGHT: float = 0.20
+
+
+SOFT_CONFLICT_PENALTY: dict[str, float] = {
+    'storage_gb': 0.40,
+    'screen_in': 0.40,
+    'color': 0.10,
+}
+
+
+HARD_REJECT_KEYS: tuple[str, ...] = (
+    'model_code',
+    'ram_gb',
+    'storage_gb',
+    'screen_in',
+    'variant_key',
+)
+
+
+TRUSTED_MPN_SOURCES: frozenset[str] = frozenset({'dns', 'citilink'})
+
+
+WEAK_SOURCES: frozenset[str] = frozenset({'ozon'})
+
+
+BRAND_ALIASES: dict[str, tuple[str, ...]] = {
+    'apple': ('apple', 'эппл', 'эпл'),
+    'asus': ('asus', 'асус'),
+    'acer': ('acer', 'эйсер'),
+    'lenovo': ('lenovo', 'леново'),
+    'huawei': ('huawei', 'хуавей', 'хуавэй'),
+    'honor': ('honor', 'хонор'),
+    'dell': ('dell', 'делл'),
+    'hp': ('hp', 'hewlett packard', 'hewlett-packard', 'хьюлетт-паккард'),
+    'msi': ('msi',),
+    'gigabyte': ('gigabyte',),
+    'samsung': ('samsung', 'самсунг'),
+    'lg': ('lg', 'эл джи', 'элджи'),
+    'xiaomi': ('xiaomi', 'сяоми', 'сяоми'),
+    'redmi': ('redmi',),
+    'kingston': ('kingston',),
+    'crucial': ('crucial',),
+    'western digital': ('western digital', 'wd', 'wd_black', 'wd black'),
+    'seagate': ('seagate',),
+    'sandisk': ('sandisk',),
+    'corsair': ('corsair',),
+    'gskill': ('g.skill', 'gskill', 'g-skill'),
+    'thermaltake': ('thermaltake',),
+    'nzxt': ('nzxt',),
+    'beelink': ('beelink',),
+    'irbis': ('irbis', 'ирбис'),
+    'tecno': ('tecno', 'текно'),
+    'infinix': ('infinix',),
+    'realme': ('realme',),
+    'dexp': ('dexp', 'дексп'),
+    'digma': ('digma', 'дигма'),
+    'haier': ('haier', 'хайер'),
+    'hiper': ('hiper', 'хайпер'),
+    'logitech': ('logitech', 'логитек'),
+    'razer': ('razer',),
+    'intel': ('intel', 'интел'),
+    'amd': ('amd',),
+    'nvidia': ('nvidia', 'нвидиа'),
+    'palit': ('palit', 'палит'),
+    'gainward': ('gainward',),
+    'sapphire': ('sapphire',),
+    'colorful': ('colorful',),
+    'inno3d': ('inno3d',),
+    'zotac': ('zotac',),
+    'aerocool': ('aerocool',),
+    'deepcool': ('deepcool', 'deep cool'),
+    'cougar': ('cougar',),
+    'chieftec': ('chieftec',),
+    'exegate': ('exegate', 'экзегейт'),
+    'fractal design': ('fractal design', 'fractal-design'),
+    'asrock': ('asrock', 'asrock'),
+    'lian li': ('lian li', 'lian-li', 'lianli'),
+    'be quiet!': ('be quiet!', 'be quiet', 'bequiet'),
+}
+
+
+CPU_FAMILIES: tuple[str, ...] = (
+    'core ultra 9', 'core ultra 7', 'core ultra 5', 'core ultra 3',
+    'core i9', 'core i7', 'core i5', 'core i3',
+    'core 9', 'core 7', 'core 5', 'core 3',
+    'ryzen 9', 'ryzen 7', 'ryzen 5', 'ryzen 3',
+    'xeon', 'pentium', 'celeron',
+    'apple m4', 'apple m3', 'apple m2', 'apple m1',
+)
+
+GPU_FAMILIES: tuple[str, ...] = (
+    'rtx 5090', 'rtx 5080', 'rtx 5070', 'rtx 5060',
+    'rtx 4090', 'rtx 4080', 'rtx 4070', 'rtx 4060', 'rtx 4050',
+    'rtx 3090', 'rtx 3080', 'rtx 3070', 'rtx 3060', 'rtx 3050',
+    'rtx 2080', 'rtx 2070', 'rtx 2060',
+    'gtx 1660', 'gtx 1650',
+    'rx 9070', 'rx 7900', 'rx 7800', 'rx 7700', 'rx 7600',
+    'rx 6800', 'rx 6700', 'rx 6600',
+    'arc a770', 'arc a750', 'arc b580',
+    'iris xe', 'uhd graphics', 'radeon graphics',
+)
+
+
+RE_BRACKET_MPN: str = r'\[([A-Za-z0-9][A-Za-z0-9\-_/.]{3,})\]'
+
+
+RE_FREE_MPN: str = r'\b([A-Z]{1,4}\d{2,}[A-Z0-9\-/_]{0,}|\d{2,}[A-Z]{1,4}\d{2,}[A-Z0-9\-/_]{0,})\b'
+
+
+COLORS: tuple[str, ...] = (
+    'черный', 'чёрный', 'black', 'white', 'белый', 'silver', 'серебристый', 'серый',
+    'grey', 'gray', 'space gray', 'space grey', 'gold', 'золотой', 'розовый', 'pink',
+    'красный', 'red', 'синий', 'blue', 'зеленый', 'зелёный', 'green',
+)
+
+
+__all__ = (
+    'AUTO_MERGE_THRESHOLD',
+    'REVIEW_THRESHOLD',
+    'WEIGHTS',
+    'NAME_DICE_WEIGHT',
+    'SOFT_CONFLICT_PENALTY',
+    'HARD_REJECT_KEYS',
+    'TRUSTED_MPN_SOURCES',
+    'WEAK_SOURCES',
+    'BRAND_ALIASES',
+    'CPU_FAMILIES',
+    'GPU_FAMILIES',
+    'COLORS',
+    'RE_BRACKET_MPN',
+    'RE_FREE_MPN',
+)

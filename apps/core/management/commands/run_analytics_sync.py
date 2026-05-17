@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandParser
 
 from apps.analytics.detector import run_full_detection
@@ -15,8 +16,22 @@ class Command(BaseCommand):
         parser.add_argument('--product-id', type=int, help='Запустить аналитику только для одного товара')
         parser.add_argument('--category', type=str, help='Slug категории: анализ только для товаров категории')
         parser.add_argument('--limit', type=int, help='Ограничить число товаров (для быстрых прогонов)')
+        parser.add_argument(
+            '--force',
+            action='store_true',
+            help='Запустить даже при выключенном ENABLE_ADVANCED_ANALYTICS (разовый эксперимент).',
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        if not getattr(settings, 'ENABLE_ADVANCED_ANALYTICS', False) and not options.get('force'):
+            self.stdout.write(
+                self.style.WARNING(
+                    'Детекция аномалий отключена (режим агрегатора). '
+                    'Включите ENABLE_ADVANCED_ANALYTICS=1 или передайте --force.'
+                )
+            )
+            return
+
         product_id = options.get('product_id')
         category_slug = options.get('category')
         limit = options.get('limit')

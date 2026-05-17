@@ -6,7 +6,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.products.models import Category
+from apps.products.models import Category, CategoryListing
 
 
 BUILTIN_CATEGORIES: list[dict[str, str]] = [
@@ -167,7 +167,7 @@ class Command(BaseCommand):
     help = (
         'Создаёт категории для парсера DNS (по уникальному slug). '
         'Встроенные пути соответствуют каталогам dns-shop.ru; если раздел открывается иначе, '
-        'исправьте dns_category_slug в админке или в JSON.'
+            'исправьте привязку DNS (CategoryListing) в админке или в JSON.'
     )
 
     def add_arguments(self, parser: Any) -> None:
@@ -223,11 +223,15 @@ class Command(BaseCommand):
                 if dry:
                     self.stdout.write(self.style.WARNING(f'+ создать: {slug} ({name})'))
                 else:
-                    Category.objects.create(
+                    cat = Category.objects.create(
                         name=name,
                         slug=slug,
-                        dns_category_slug=dns,
                         is_active=True,
+                    )
+                    CategoryListing.objects.update_or_create(
+                        category=cat,
+                        source=CategoryListing.Source.DNS,
+                        defaults={'external_path': dns, 'is_active': True},
                     )
                 created_n += 1
                 continue
@@ -238,8 +242,12 @@ class Command(BaseCommand):
                 else:
                     Category.objects.filter(pk=exists.pk).update(
                         name=name,
-                        dns_category_slug=dns,
                         is_active=True,
+                    )
+                    CategoryListing.objects.update_or_create(
+                        category=exists,
+                        source=CategoryListing.Source.DNS,
+                        defaults={'external_path': dns, 'is_active': True},
                     )
                 updated_n += 1
             else:
