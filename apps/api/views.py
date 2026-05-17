@@ -1,10 +1,12 @@
-from rest_framework import mixins, permissions, viewsets
-from rest_framework.decorators import action
+from django.contrib.auth import authenticate, login, logout
+from rest_framework import mixins, permissions, status, viewsets
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from apps.alerts.models import Notification, Subscription
+from apps.alerts.models import Notification, Subscription, Wishlist, WishlistItem
 from apps.analytics.models import Anomaly
+from apps.core.models import User
 from apps.prices.models import PriceHistory
 from apps.products.models import Offer, Product
 
@@ -16,6 +18,10 @@ from .serializers import (
     ProductDetailSerializer,
     ProductListSerializer,
     SubscriptionSerializer,
+    WishlistItemSerializer,
+    WishlistSerializer,
+    UserSerializer,
+    UserRegisterSerializer,
 )
 
 
@@ -90,3 +96,105 @@ class AnomalyViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.AllowAny]
     filterset_fields = ['severity', 'anomaly_type', 'resolved', 'product']
     ordering_fields = ['detected_at', 'severity']
+
+
+class WishlistViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @action(detail=False, methods=['get', 'patch'])
+    def me(self, request: Request) -> Response:
+        if request.method == 'PATCH':
+            wishlist, _ = Wishlist.objects.get_or_create(user=request.user)
+            serializer = WishlistSerializer(wishlist, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
+        wishlist, _ = Wishlist.objects.get_or_create(user=request.user)
+        serializer = WishlistSerializer(wishlist)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'])
+    def add_item(self, request: Request) -> Response:
+        wishlist, _ = Wishlist.objects.get_or_create(user=request.user)
+        product_id = request.data.get('product_id')
+        quantity = request.data.get('quantity', 1)
+
+        if not product_id:
+            return Response({'error': 'product_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        item, created = WishlistItem.objects.get_or_create(
+            wishlist=wishlist,
+            product=product,
+            defaults={'quantity': quantity, 'note': request.data.get('note', '')},
+        )
+        if not created:
+            item.quantity = quantity
+            if 'note' in request.data:
+                item.note = request.data['note']
+            item.save()
+
+        serializer = WishlistItemSerializer(item)
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=False, methods=['delete'], url_path='remove-item/(?P<item_id>[^/.]+)')
+    def remove_item(self, request: Request, item_id: int | None = None) -> Response:
+        try:
+            item = WishlistItem.objects.get(id=item_id, wishlist__user=request.user)
+            item.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except WishlistItem.DoesNotExist:
+            return Response({'error': 'Item not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def register(request: Request) -> Response:
+    serializer = UserRegisterSerializer(data=request.data)
+    if serializer.is_valid():
+        user = serializer.save()
+        Wishlist.objects.create(user=user)
+        return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def login_view(request: Request) -> Response:
+    username = request.data.get('username')
+    password = request.data.get('password')
+
+    if not username or not password:
+        return Response(
+            {'error': 'Username and password required'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        return Response(
+            {'error': 'Invalid credentials'},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    login(request, user)
+    return Response(UserSerializer(user).data)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def logout_view(request: Request) -> Response:
+    logout(request)
+    return Response({'message': 'Logged out'})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def me_view(request: Request) -> Response:
+    serializer = UserSerializer(request.user)
+    return Response(serializer.data)

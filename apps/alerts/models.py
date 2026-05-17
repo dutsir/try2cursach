@@ -57,3 +57,55 @@ class Notification(BaseModel):
 
     def __str__(self) -> str:
         return f'Уведомление для {self.user} ({self.sent_at:%d.%m.%Y %H:%M})'
+
+
+class Wishlist(BaseModel):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='wishlist',
+        verbose_name='Пользователь',
+    )
+    title = models.CharField('Название', max_length=255, default='Мой вишлист')
+    description = models.TextField('Описание', blank=True)
+
+    class Meta:
+        verbose_name = 'Вишлист'
+        verbose_name_plural = 'Вишлисты'
+
+    def __str__(self) -> str:
+        return f'{self.user} — {self.title}'
+
+    @property
+    def total_price(self) -> float:
+        return sum(
+            (item.product.best_offer.price if item.product.best_offer else 0) * item.quantity
+            for item in self.items.all()
+        )
+
+
+class WishlistItem(BaseModel):
+    wishlist = models.ForeignKey(
+        Wishlist,
+        on_delete=models.CASCADE,
+        related_name='items',
+        verbose_name='Вишлист',
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='wishlist_items',
+        verbose_name='Товар',
+    )
+    quantity = models.PositiveIntegerField('Количество', default=1)
+    note = models.TextField('Заметка', blank=True)
+    added_at = models.DateTimeField('Добавлен', auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Товар в вишлисте'
+        verbose_name_plural = 'Товары в вишлисте'
+        unique_together = ('wishlist', 'product')
+        ordering = ['-added_at']
+
+    def __str__(self) -> str:
+        return f'{self.product.name} × {self.quantity}'

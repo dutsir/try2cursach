@@ -2,8 +2,9 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from apps.alerts.models import Notification, Subscription
+from apps.alerts.models import Notification, Subscription, Wishlist, WishlistItem
 from apps.analytics.models import Anomaly
+from apps.core.models import User
 from apps.prices.models import PriceHistory
 from apps.products.models import Category, CategoryListing, Offer, Product
 
@@ -170,3 +171,47 @@ class AnomalySerializer(serializers.ModelSerializer):
             'id', 'product', 'product_name', 'anomaly_type',
             'severity', 'description', 'detected_at', 'resolved',
         )
+
+
+class WishlistItemSerializer(serializers.ModelSerializer):
+    product = ProductListSerializer(read_only=True)
+    product_id = serializers.IntegerField(write_only=True)
+
+    class Meta:
+        model = WishlistItem
+        fields = ('id', 'product', 'product_id', 'quantity', 'note', 'added_at')
+        read_only_fields = ('added_at',)
+
+
+class WishlistSerializer(serializers.ModelSerializer):
+    items = WishlistItemSerializer(many=True, read_only=True)
+    total_price = serializers.FloatField(read_only=True)
+
+    class Meta:
+        model = Wishlist
+        fields = ('id', 'title', 'description', 'items', 'total_price', 'created_at')
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'avatar')
+        read_only_fields = ('id',)
+
+
+class UserRegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True, min_length=8)
+
+    class Meta:
+        model = User
+        fields = ('username', 'email', 'password', 'password_confirm', 'first_name', 'last_name')
+
+    def validate(self, data: dict) -> dict:
+        if data['password'] != data.pop('password_confirm'):
+            raise serializers.ValidationError({'password': 'Пароли не совпадают.'})
+        return data
+
+    def create(self, validated_data: dict):
+        user = User.objects.create_user(**validated_data)
+        return user
