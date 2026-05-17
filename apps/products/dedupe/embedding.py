@@ -80,10 +80,26 @@ def _load_model() -> Any:
         )
         _MODEL_LOAD_FAILED = True
         return None
+
+    from pathlib import Path
     name = embedding_model_name()
+
+    # Check if model_name is a local path (fine-tuned model)
+    model_path = Path(name)
+    if model_path.exists() and model_path.is_dir():
+        try:
+            _MODEL = SentenceTransformer(name)
+            logger.info('Fine-tuned embedding-модель загружена (локально): %s', name)
+            return _MODEL
+        except Exception:
+            logger.exception('Не удалось загрузить fine-tuned модель %s', name)
+            _MODEL_LOAD_FAILED = True
+            return None
+
+    # Fall back to HuggingFace model
     try:
         _MODEL = SentenceTransformer(name)
-        logger.info('Embedding-модель загружена: %s', name)
+        logger.info('Embedding-модель загружена (HuggingFace): %s', name)
     except Exception:
         logger.exception('Не удалось загрузить embedding-модель %s', name)
         _MODEL_LOAD_FAILED = True
