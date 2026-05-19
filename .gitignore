@@ -7,6 +7,25 @@ dist/
 build/
 *.whl
 
+# Frontend (Node / Vite / Tailwind)
+node_modules/
+frontend/dist/
+frontend/.vite/
+# Vite временные предсборки зависимостей
+**/.vite/deps/
+**/.vite/deps_temp_*/
+# Логи npm / yarn / pnpm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.pnpm-store/
+# Локальные env-файлы фронта
+*.local
+frontend/.env
+frontend/.env.local
+
 venv/
 .venv/
 env/
