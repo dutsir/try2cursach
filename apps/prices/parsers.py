@@ -363,6 +363,14 @@ class ChromeDriverMixin:
             '--disable-dev-shm-usage',
             '--window-size=1920,1080',
             f'--user-agent={_chrome_user_agent()}',
+            # Запрещаем Chrome снижать активность рендерера когда окно
+            # не в фокусе, свёрнуто или за пределами экрана.
+            # Без этих флагов Intersection Observer срабатывает редко,
+            # JS-таймеры тормозят, lazy-load страниц не работает.
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-features=OptimizeBackground',
         ):
             options.add_argument(arg)
 
@@ -433,10 +441,15 @@ class ChromeDriverMixin:
 
         if self.start_minimized:
             try:
-                driver.minimize_window()
-                logger.info('Окно Chrome свёрнуто')
+                # Перемещаем окно за пределы экрана вместо minimize_window().
+                # minimize_window() вызывает throttling JS-движка и отключает
+                # intersection observers, из-за чего lazy-load и «Показать ещё»
+                # не работают. При off-screen позиции Chrome считает окно видимым
+                # и рендерит страницу в полную силу — парсинг работает корректно.
+                driver.set_window_position(-32000, 0)
+                logger.info('Окно Chrome скрыто (off-screen, -32000,0)')
             except Exception:
-                logger.debug('Не удалось свернуть окно Chrome', exc_info=True)
+                logger.debug('Не удалось скрыть окно Chrome off-screen', exc_info=True)
 
         return driver
 
@@ -533,8 +546,25 @@ class DNSParser(ChromeDriverMixin, BaseParser):
             page_timeout_default=60,
         )
         self.catalog_element_wait = int(getattr(settings, 'DNS_CATALOG_ELEMENT_WAIT', 60))
-        self.catalog_scroll_max_rounds = int(getattr(settings, 'DNS_CATALOG_SCROLL_MAX_ROUNDS', 60))
+        self.catalog_scroll_max_rounds = int(
+            getattr(settings, 'DNS_CATALOG_SCROLL_MAX_ROUNDS', 60),
+        )
         self.catalog_scroll_stable = int(getattr(settings, 'DNS_CATALOG_SCROLL_STABLE', 5))
+        self.catalog_scroll_min_rounds = int(
+            getattr(settings, 'DNS_CATALOG_SCROLL_MIN_ROUNDS', 8),
+        )
+        self.catalog_scroll_pause = (
+            float(getattr(settings, 'DNS_CATALOG_SCROLL_PAUSE_MIN', 2.0)),
+            float(getattr(settings, 'DNS_CATALOG_SCROLL_PAUSE_MAX', 4.0)),
+        )
+        self.catalog_scroll_pause_short = (
+            float(getattr(settings, 'DNS_CATALOG_SCROLL_PAUSE_SHORT_MIN', 1.2)),
+            float(getattr(settings, 'DNS_CATALOG_SCROLL_PAUSE_SHORT_MAX', 2.4)),
+        )
+        self.catalog_scroll_pause_more = (
+            float(getattr(settings, 'DNS_CATALOG_SCROLL_PAUSE_MORE_MIN', 2.5)),
+            float(getattr(settings, 'DNS_CATALOG_SCROLL_PAUSE_MORE_MAX', 4.5)),
+        )
 
     def _check_dns_blocked(self, driver: Any) -> None:
         te = self._selenium_exceptions
@@ -695,6 +725,14 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         return list(seen.values())
 
     def _click_catalog_more(self, driver: Any) -> bool:
+        # Используем JS-проверку видимости вместо is_displayed(),
+        # так как is_displayed() возвращает False при off-screen / minimized окне.
+        _is_visible_js = (
+            'var r = arguments[0].getBoundingClientRect();'
+            'var s = window.getComputedStyle(arguments[0]);'
+            'return s.display !== "none" && s.visibility !== "hidden"'
+            ' && parseFloat(s.opacity) > 0 && !arguments[0].disabled;'
+        )
         for sel in (
             'button.catalog-more__button',
             '.catalog-more__button',
@@ -703,7 +741,7 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         ):
             try:
                 el = driver.find_element(self._by.CSS_SELECTOR, sel)
-                if el.is_displayed() and el.is_enabled():
+                if driver.execute_script(_is_visible_js, el):
                     driver.execute_script('arguments[0].click();', el)
                     return True
             except Exception:
@@ -715,64 +753,196 @@ class DNSParser(ChromeDriverMixin, BaseParser):
             )
             try:
                 for el in driver.find_elements(self._by.XPATH, xp):
-                    if el.is_displayed() and el.is_enabled():
+                    if driver.execute_script(_is_visible_js, el):
                         driver.execute_script('arguments[0].click();', el)
                         return True
             except Exception:
                 pass
         return False
 
-    @staticmethod
-    def _scroll_catalog_js(driver: Any) -> None:
-        driver.execute_script(
-            """
-            var h = Math.max(
-                document.body ? document.body.scrollHeight : 0,
-                document.documentElement.scrollHeight
-            );
-            window.scrollTo(0, h);
-            var first = document.querySelector('.catalog-product');
-            if (!first) return;
-            var el = first.parentElement;
-            while (el && el !== document.body && el !== document.documentElement) {
-                var st = window.getComputedStyle(el);
-                var oy = st.overflowY;
-                if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay')
-                    && el.scrollHeight > el.clientHeight + 40) {
-                    el.scrollTop = el.scrollHeight;
-                }
-                el = el.parentElement;
+    # Инкрементальный скролл: двигаемся на один «экран» вниз.
+    # window.scrollBy надёжнее scrollIntoView — он не перепрыгивает
+    # через IO-триггер (элемент, на котором DNS вешает «подгрузить ещё»).
+    # Дополнительно диспатчим WheelEvent для эмуляции живого пользователя.
+    _SCROLL_STEP_JS = r"""
+    var step = arguments[0] || 700;
+    var prevY = window.pageYOffset;
+    window.scrollBy({ top: step, behavior: 'instant' });
+    try {
+        window.dispatchEvent(new WheelEvent('wheel', { deltaY: step, bubbles: true }));
+    } catch(e) {}
+    try { window.dispatchEvent(new Event('scroll')); } catch(e) {}
+    return {
+        prevY: prevY,
+        curY: window.pageYOffset,
+        maxY: Math.max(0, document.documentElement.scrollHeight
+                          - document.documentElement.clientHeight),
+        count: document.querySelectorAll('.catalog-product').length
+    };
+    """
+
+    # После окончания инкрементального скролла прокручиваем до самого низа.
+    _SCROLL_BOTTOM_JS = r"""
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' });
+    try { window.dispatchEvent(new Event('scroll')); } catch(e) {}
+    return document.querySelectorAll('.catalog-product').length;
+    """
+
+    # Считываем счётчик «Показано N из M товаров» со страницы DNS.
+    # Возвращает {shown: N, total: M} или null если счётчик не найден.
+    _READ_COUNTER_JS = r"""
+    (function() {
+        // DNS показывает что-то вроде "Показано 36 из 120 товаров"
+        var selectors = [
+            '.products-count__count',
+            '.products-count',
+            '[class*="products-count"]',
+            '.catalog-products__info',
+            '[class*="catalog-count"]',
+            '.catalog-result__count',
+        ];
+        function parseTwo(text) {
+            var nums = (text || '').match(/\d+/g);
+            if (nums && nums.length >= 2) {
+                return { shown: parseInt(nums[0]), total: parseInt(nums[nums.length - 1]) };
             }
-            """
-        )
+            return null;
+        }
+        for (var i = 0; i < selectors.length; i++) {
+            var el = document.querySelector(selectors[i]);
+            if (el) {
+                var res = parseTwo(el.textContent || '');
+                if (res && res.total > 0) return res;
+            }
+        }
+        // Fallback: ищем текст «из N» во всём документе
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        var node;
+        while ((node = walker.nextNode())) {
+            var t = node.textContent || '';
+            if (t.indexOf('из') !== -1 && t.indexOf('товар') !== -1) {
+                var res2 = parseTwo(t);
+                if (res2 && res2.total > 0) return res2;
+            }
+        }
+        return null;
+    })();
+    """
+
+    def _read_dns_counter(self, driver: Any) -> tuple[int, int] | None:
+        """Возвращает (shown, total) из счётчика DNS или None если не найдено."""
+        try:
+            result = driver.execute_script(self._READ_COUNTER_JS)
+            if isinstance(result, dict):
+                shown = int(result.get('shown') or 0)
+                total = int(result.get('total') or 0)
+                if total > 0:
+                    return shown, total
+        except Exception:
+            pass
+        return None
 
     def _scroll_to_load_all(self, driver: Any) -> None:
-        stable = 0
+        """Прокручивает каталог DNS инкрементально, давая IO-триггерам срабатывать."""
         max_r = max(1, self.catalog_scroll_max_rounds)
         need_stable = max(1, self.catalog_scroll_stable)
-        for _ in range(max_r):
-            prev = len(driver.find_elements(self._by.CLASS_NAME, 'catalog-product'))
-            self._scroll_catalog_js(driver)
-            time.sleep(random.uniform(1.0, 1.8))
-            self._scroll_catalog_js(driver)
-            time.sleep(random.uniform(0.6, 1.2))
-            cur = len(driver.find_elements(self._by.CLASS_NAME, 'catalog-product'))
-            if cur > prev:
-                stable = 0
-                logger.debug('Каталог DNS: +%s карточек (всего %s)', cur - prev, cur)
-                continue
-            if self._click_catalog_more(driver):
-                stable = 0
-                time.sleep(random.uniform(1.5, 2.5))
-                continue
-            stable += 1
-            if stable >= need_stable:
+        min_rounds = max(1, self.catalog_scroll_min_rounds)
+
+        # Размер шага — ~70% высоты вьюпорта, чтобы не перескакивать IO-триггер
+        try:
+            viewport_h = driver.execute_script(
+                'return document.documentElement.clientHeight || 900;'
+            )
+            step = max(400, int(float(viewport_h) * 0.7))
+        except Exception:
+            step = 700
+
+        stable = 0
+        prev_count = len(driver.find_elements(self._by.CLASS_NAME, 'catalog-product'))
+        at_bottom_rounds = 0
+
+        # Читаем ожидаемое количество товаров со страницы (ранний выход)
+        expected_total: int | None = None
+        counter = self._read_dns_counter(driver)
+        if counter:
+            expected_total = counter[1]
+            logger.info('DNS каталог: ожидается %s товаров (по счётчику страницы)', expected_total)
+
+        for rnd in range(max_r):
+            # Ранний выход: уже загрузили все товары по счётчику страницы
+            if expected_total and prev_count >= expected_total:
                 logger.info(
-                    'Подгрузка каталога завершена: карточек в DOM %s '
-                    '(%s раундов без роста подряд).',
-                    cur, need_stable,
+                    'Все товары загружены: %s/%s (раунд %s).',
+                    prev_count, expected_total, rnd + 1,
                 )
                 return
+
+            # Шаг скролла вниз
+            try:
+                info = driver.execute_script(self._SCROLL_STEP_JS, step)
+            except Exception:
+                logger.debug('DNS scroll step JS failed', exc_info=True)
+                info = {}
+
+            at_bottom = isinstance(info, dict) and info.get('curY', 0) >= info.get('maxY', 1) - 5
+            pause_range = (
+                self.catalog_scroll_pause_short
+                if not at_bottom
+                else self.catalog_scroll_pause
+            )
+            time.sleep(random.uniform(*pause_range))
+
+            # Если добрались до низа — попробуем «Показать ещё» и финальный scroll
+            if at_bottom:
+                at_bottom_rounds += 1
+                clicked = self._click_catalog_more(driver)
+                if clicked:
+                    stable = 0
+                    at_bottom_rounds = 0
+                    time.sleep(random.uniform(*self.catalog_scroll_pause_more))
+                    # После подгрузки отматываем немного назад, чтобы IO сработал
+                    try:
+                        driver.execute_script(
+                            'window.scrollBy({ top: -300, behavior: "instant" });'
+                        )
+                    except Exception:
+                        pass
+                    time.sleep(random.uniform(0.4, 0.8))
+                    continue
+
+                # Последний шанс: прокрутка к самому низу
+                try:
+                    driver.execute_script(self._SCROLL_BOTTOM_JS)
+                    time.sleep(random.uniform(*self.catalog_scroll_pause_short))
+                except Exception:
+                    pass
+
+            cur_count = len(driver.find_elements(self._by.CLASS_NAME, 'catalog-product'))
+            if cur_count > prev_count:
+                logger.debug('Каталог DNS: +%s карточек (всего %s)', cur_count - prev_count, cur_count)
+                stable = 0
+                at_bottom_rounds = 0
+                prev_count = cur_count
+                # Обновим expected_total если счётчик изменился
+                if not expected_total:
+                    counter = self._read_dns_counter(driver)
+                    if counter:
+                        expected_total = counter[1]
+                        logger.info(
+                            'DNS каталог: обновлён ожидаемый итог — %s товаров',
+                            expected_total,
+                        )
+                continue
+
+            stable += 1
+            if stable >= need_stable and (rnd + 1) >= min_rounds:
+                logger.info(
+                    'Подгрузка каталога завершена: карточек в DOM %s '
+                    '(%s раундов без роста подряд, раунд %s).',
+                    cur_count, need_stable, rnd + 1,
+                )
+                return
+
         logger.warning(
             'Достигнут лимит раундов прокрутки (%s), карточек в DOM: %s. '
             'При необходимости увеличьте DNS_CATALOG_SCROLL_MAX_ROUNDS.',

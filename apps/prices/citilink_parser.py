@@ -28,6 +28,21 @@ return (function () {
     return /^\d+$/.test(s) ? parseInt(s, 10) : null;
   }
   function cardIsAvailable(card) {
+    // Сначала структурированные сигналы — надёжнее текста.
+    var av = card.getAttribute('data-meta-availability')
+      || (card.querySelector('[data-meta-availability]')
+          ? card.querySelector('[data-meta-availability]').getAttribute('data-meta-availability')
+          : '');
+    if (av) {
+      var a = String(av).toLowerCase();
+      if (a === 'false' || a === '0' || a === 'outofstock' || a === 'out_of_stock') return false;
+      if (a === 'true' || a === '1' || a === 'instock' || a === 'in_stock') return true;
+    }
+    if (card.querySelector('[data-meta-name="SubscribeToBackInStockButton"],'
+      + '[data-meta-name="OutOfStockBlock"],'
+      + '[data-meta-name*="OutOfStock"]')) {
+      return false;
+    }
     var t = (card.innerText || '').toLowerCase();
     if (t.indexOf('нет в наличии') !== -1) return false;
     if (t.indexOf('нет в продаже') !== -1) return false;
@@ -51,8 +66,16 @@ return (function () {
     if (u.indexOf('/') === 0) return 'https://www.citilink.ru' + u;
     return u;
   }
+  // Несколько вариантов селекторов карточек: Citilink периодически
+  // меняет data-meta-name (SearchSnippet, Snippet*, *Layout), а на
+  // мобильной вёрстке встречаются собственные варианты.
   var cards = document.querySelectorAll(
-    '[data-meta-name="ProductHorizontalSnippet"],[data-meta-name="ProductVerticalSnippet"]'
+    '[data-meta-name="ProductHorizontalSnippet"],'
+    + '[data-meta-name="ProductVerticalSnippet"],'
+    + '[data-meta-name="ProductCardVerticalLayout"],'
+    + '[data-meta-name="ProductCardHorizontalLayout"],'
+    + '[data-meta-name="SearchSnippet"],'
+    + '[data-meta-name="ProductSnippet"]'
   );
   var out = [];
   var seen = Object.create(null);
@@ -69,6 +92,7 @@ return (function () {
       href = 'https://www.citilink.ru' + (href.charAt(0) === '/' ? href : '/' + href);
     }
     if (!href) continue;
+    if (seen[href]) continue;
     var variantHint = '';
     var cfgEl = card.querySelector(
       '[data-meta-name*="Configuration"],[data-meta-name*="Variant"],[data-meta-configuration]'
@@ -119,14 +143,196 @@ return (function () {
 })();
 """
 
+
+# Fallback-извлечение из __NEXT_DATA__: Citilink — Next.js, и при поломке
+# data-meta-* селекторов структурированные данные всё равно остаются в JSON
+# в <script id="__NEXT_DATA__">. Рекурсивно ищем объекты, похожие на продукты:
+# у них есть name/title, price, и url/path/slug ведущий на /product/.
+_CITILINK_NEXTDATA_EXTRACT_JS = r"""
+return (function () {
+  var script = document.getElementById('__NEXT_DATA__');
+  if (!script) return null;
+  var raw = script.textContent || script.innerText || '';
+  if (!raw) return null;
+  var data;
+  try { data = JSON.parse(raw); } catch (e) { return null; }
+
+  function cleanInt(v) {
+    if (v == null) return null;
+    if (typeof v === 'number' && isFinite(v)) return Math.round(v);
+    var s = String(v).replace(/\s+/g, '').replace(/[^\d]/g, '');
+    return /^\d+$/.test(s) ? parseInt(s, 10) : null;
+  }
+  function normalizeUrl(u) {
+    if (!u) return '';
+    var s = String(u).trim();
+    if (!s) return '';
+    if (s.indexOf('http') === 0) return s;
+    if (s.indexOf('//') === 0) return 'https:' + s;
+    return 'https://www.citilink.ru' + (s.charAt(0) === '/' ? s : '/' + s);
+  }
+  function pickName(o) {
+    return (o.name || o.title || o.shortName || o.fullName || '').toString().trim();
+  }
+  function pickUrl(o) {
+    var u = o.url || o.link || o.href || o.path || '';
+    if (!u && o.slug) {
+      u = '/product/' + String(o.slug).replace(/^\/+/, '');
+    }
+    return normalizeUrl(u);
+  }
+  function pickPrice(o) {
+    if (o.price && typeof o.price === 'object') {
+      return cleanInt(o.price.current || o.price.value || o.price.amount || o.price.client);
+    }
+    return cleanInt(o.price || o.priceCurrent || o.currentPrice || o.clientPrice);
+  }
+  function pickOldPrice(o) {
+    if (o.price && typeof o.price === 'object') {
+      return cleanInt(o.price.old || o.price.prev || o.price.previous);
+    }
+    return cleanInt(o.oldPrice || o.previousPrice || o.priceOld);
+  }
+  function pickImage(o) {
+    var img = o.image || o.imageUrl || o.preview || o.imagePreview || '';
+    if (img && typeof img === 'object') {
+      img = img.url || img.src || img.default || img.large || '';
+    }
+    if (!img && Array.isArray(o.images) && o.images.length) {
+      var first = o.images[0];
+      if (typeof first === 'string') img = first;
+      else if (first && typeof first === 'object') img = first.url || first.src || '';
+    }
+    return normalizeUrl(img);
+  }
+  function isProductLike(o) {
+    if (!o || typeof o !== 'object') return false;
+    var url = pickUrl(o);
+    if (!url || url.indexOf('/product/') === -1) return false;
+    if (!pickName(o)) return false;
+    if (pickPrice(o) == null) return false;
+    return true;
+  }
+
+  var out = [];
+  var seen = Object.create(null);
+  var stack = [data];
+  var guard = 0;
+  while (stack.length && guard < 200000) {
+    guard++;
+    var node = stack.pop();
+    if (!node) continue;
+    if (Array.isArray(node)) {
+      for (var i = 0; i < node.length; i++) stack.push(node[i]);
+      continue;
+    }
+    if (typeof node !== 'object') continue;
+    if (isProductLike(node)) {
+      var url = pickUrl(node);
+      if (!seen[url]) {
+        seen[url] = true;
+        var price = pickPrice(node);
+        var av = node.availability || node.available || node.inStock;
+        var isAvail = true;
+        if (typeof av === 'boolean') isAvail = av;
+        else if (typeof av === 'string') {
+          var a = av.toLowerCase();
+          if (a === 'false' || a === 'outofstock' || a === 'out_of_stock' || a === '0') isAvail = false;
+        }
+        out.push({
+          name: pickName(node),
+          url: url,
+          price: price,
+          old_price: pickOldPrice(node),
+          image_url: pickImage(node),
+          vendor_code: String(node.id || node.offerId || node.productId || node.sku || ''),
+          is_available: isAvail
+        });
+      }
+    }
+    for (var k in node) {
+      if (Object.prototype.hasOwnProperty.call(node, k)) {
+        var v = node[k];
+        if (v && typeof v === 'object') stack.push(v);
+      }
+    }
+  }
+  return out;
+})();
+"""
+
 _PAGES_COUNT_JS = r"""
-var el = document.querySelector('[data-meta-name="SubcategoryPageTitle__product-count"]');
-if (!el) return 1;
-var cnt = el.getAttribute('data-meta-product-count');
-if (!cnt) return 1;
-var n = parseInt(cnt, 10);
-if (!n || n < 1) return 1;
-return Math.max(1, Math.ceil(n / 48));
+return (function () {
+  var PAGE_SIZE = 48;
+  // 1) Несколько вариантов data-атрибута со счётчиком товаров на странице.
+  var countSelectors = [
+    '[data-meta-name="SubcategoryPageTitle__product-count"]',
+    '[data-meta-product-count]',
+    '[data-meta-name*="ProductCount"]',
+  ];
+  for (var i = 0; i < countSelectors.length; i++) {
+    var el = document.querySelector(countSelectors[i]);
+    if (!el) continue;
+    var raw = el.getAttribute('data-meta-product-count') || el.textContent || '';
+    var nums = String(raw).match(/\d+/);
+    var n = nums ? parseInt(nums[0], 10) : 0;
+    if (n && n > 0) return Math.max(1, Math.ceil(n / PAGE_SIZE));
+  }
+  // 2) Самая большая ссылка-цифра в блоке пагинации.
+  var pgLinks = document.querySelectorAll(
+    '[data-meta-name="PaginationButton"], a[href*="p="], button[data-meta-name*="Pagination"]'
+  );
+  var maxPage = 0;
+  for (var j = 0; j < pgLinks.length; j++) {
+    var lnk = pgLinks[j];
+    var txt = (lnk.innerText || lnk.textContent || '').trim();
+    var m = txt.match(/^\d+$/);
+    if (m) {
+      var p = parseInt(m[0], 10);
+      if (p > maxPage) maxPage = p;
+    }
+    var href = lnk.getAttribute && lnk.getAttribute('href');
+    if (href) {
+      var hm = href.match(/[?&]p=(\d+)/);
+      if (hm) {
+        var hp = parseInt(hm[1], 10);
+        if (hp > maxPage) maxPage = hp;
+      }
+    }
+  }
+  if (maxPage > 0) return maxPage;
+  // 3) __NEXT_DATA__ как последний шанс.
+  var script = document.getElementById('__NEXT_DATA__');
+  if (script) {
+    try {
+      var data = JSON.parse(script.textContent || '');
+      var stack = [data];
+      var guard = 0;
+      while (stack.length && guard < 50000) {
+        guard++;
+        var node = stack.pop();
+        if (!node || typeof node !== 'object') continue;
+        if (Array.isArray(node)) {
+          for (var k = 0; k < node.length; k++) stack.push(node[k]);
+          continue;
+        }
+        var total = node.totalCount || node.total || node.productsCount;
+        if (typeof total === 'number' && total > 0) {
+          return Math.max(1, Math.ceil(total / PAGE_SIZE));
+        }
+        var pages = node.pagesCount || node.totalPages;
+        if (typeof pages === 'number' && pages > 0) return pages;
+        for (var p2 in node) {
+          if (Object.prototype.hasOwnProperty.call(node, p2)) {
+            var v = node[p2];
+            if (v && typeof v === 'object') stack.push(v);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+  return 1;
+})();
 """
 
 
@@ -243,19 +449,39 @@ class CitilinkParser(ChromeDriverMixin, BaseParser):
                 break
             time.sleep(0.35)
 
+    _CARD_PRESENCE_SELECTOR = (
+        '[data-meta-name="ProductHorizontalSnippet"],'
+        '[data-meta-name="ProductVerticalSnippet"],'
+        '[data-meta-name="ProductCardVerticalLayout"],'
+        '[data-meta-name="ProductCardHorizontalLayout"],'
+        '[data-meta-name="SearchSnippet"],'
+        '[data-meta-name="ProductSnippet"]'
+    )
+
     def _wait_cards(self, driver: Any) -> None:
         try:
             self._web_driver_wait(driver, self.catalog_element_wait).until(
-                self._ec.any_of(
-                    self._ec.presence_of_element_located(
-                        (self._by.CSS_SELECTOR, '[data-meta-name="ProductHorizontalSnippet"]')
-                    ),
-                    self._ec.presence_of_element_located(
-                        (self._by.CSS_SELECTOR, '[data-meta-name="ProductVerticalSnippet"]')
-                    ),
+                self._ec.presence_of_element_located(
+                    (self._by.CSS_SELECTOR, self._CARD_PRESENCE_SELECTOR)
                 )
             )
         except Exception:
+            # DOM-карточки не пришли — но __NEXT_DATA__ может содержать товары
+            # (страница загружается без клиентской гидратации). Дадим fallback-у
+            # шанс вместо немедленного падения.
+            try:
+                has_nd = bool(driver.execute_script(
+                    'return !!document.getElementById("__NEXT_DATA__");'
+                ))
+            except Exception:
+                has_nd = False
+            if has_nd:
+                logger.warning(
+                    'Citilink: DOM-карточки за %ss не появились, '
+                    'но __NEXT_DATA__ есть — продолжаем через fallback.',
+                    self.catalog_element_wait,
+                )
+                return
             try:
                 title = driver.title
                 cur = driver.current_url
@@ -268,14 +494,34 @@ class CitilinkParser(ChromeDriverMixin, BaseParser):
             raise
 
     def _extract_rows(self, driver: Any) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
         try:
             raw = driver.execute_script(_CITILINK_CARDS_EXTRACT_JS)
+            if isinstance(raw, list):
+                rows = [item for item in raw if isinstance(item, dict)]
         except Exception:
             logger.warning('Citilink: batch JS не выполнился', exc_info=True)
-            return []
-        if not isinstance(raw, list):
-            return []
-        return [item for item in raw if isinstance(item, dict)]
+
+        if rows:
+            return rows
+
+        # Fallback: data-meta-* селекторы не дали карточек.
+        # Пробуем достать товары из __NEXT_DATA__ — Citilink-SSR оставляет
+        # структурированные данные продуктов в JSON, который не зависит от
+        # текущей разметки и переживает редизайн.
+        try:
+            raw_nd = driver.execute_script(_CITILINK_NEXTDATA_EXTRACT_JS)
+            if isinstance(raw_nd, list):
+                nd_rows = [item for item in raw_nd if isinstance(item, dict)]
+                if nd_rows:
+                    logger.info(
+                        'Citilink: DOM-карточек 0, восстановлено из __NEXT_DATA__: %d',
+                        len(nd_rows),
+                    )
+                    return nd_rows
+        except Exception:
+            logger.warning('Citilink: __NEXT_DATA__ fallback не выполнился', exc_info=True)
+        return []
 
     @staticmethod
     def _row_to_parsed(row: dict[str, Any]) -> ParsedProduct | None:
