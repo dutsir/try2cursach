@@ -24,6 +24,99 @@ logger = logging.getLogger(__name__)
 
 DNS_BASE_URL = 'https://www.dns-shop.ru'
 
+
+# Скрипт, который инжектится в КАЖДУЮ новую страницу через CDP
+# (Page.addScriptToEvaluateOnNewDocument) ДО выполнения скриптов сайта.
+# Назначение: DNS подгружает цены и часть карточек только когда страница
+# «видима» (document.visibilityState === 'visible' и document.hasFocus()).
+# Если Chrome запущен с off-screen окном, минимизирован или потерял фокус,
+# visibilityState становится 'hidden' / 'prerender', JS-обработчики цен
+# не срабатывают, и парсер получает карточки без цен.
+#
+# Подменяем геттеры document.hidden / visibilityState / hasFocus так, чтобы
+# страница всегда считала окно активным. Дополнительно ловим события
+# visibilitychange/blur/focus и предотвращаем их распространение, иначе
+# фронт-скрипты DNS успевают «зарегистрировать» уход в фон и встают на паузу.
+_DNS_FORCE_FOREGROUND_JS = r"""
+(function () {
+  try {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true, get: function () { return false; }
+    });
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true, get: function () { return 'visible'; }
+    });
+    Object.defineProperty(document, 'webkitHidden', {
+      configurable: true, get: function () { return false; }
+    });
+    Object.defineProperty(document, 'webkitVisibilityState', {
+      configurable: true, get: function () { return 'visible'; }
+    });
+    document.hasFocus = function () { return true; };
+  } catch (e) {}
+  // Глушим события blur/visibilitychange — они выключают JS-таймеры DNS.
+  var BAD = ['blur', 'visibilitychange', 'webkitvisibilitychange',
+             'pagehide', 'freeze'];
+  for (var i = 0; i < BAD.length; i++) {
+    (function (name) {
+      window.addEventListener(name, function (e) {
+        e.stopImmediatePropagation();
+      }, true);
+      document.addEventListener(name, function (e) {
+        e.stopImmediatePropagation();
+      }, true);
+    })(BAD[i]);
+  }
+})();
+"""
+
+
+# Имитация активности пользователя: программные mousemove + focus + scroll.
+# Запускается после загрузки страницы, чтобы «разбудить» отложенные
+# обработчики, которые DNS вешает на первый interaction.
+_DNS_NUDGE_ACTIVITY_JS = r"""
+(function () {
+  try { window.focus(); } catch (e) {}
+  try {
+    var ev = new MouseEvent('mousemove', {
+      bubbles: true, cancelable: true,
+      clientX: 100 + Math.random() * 400,
+      clientY: 200 + Math.random() * 400
+    });
+    document.dispatchEvent(ev);
+    document.body && document.body.dispatchEvent(ev);
+  } catch (e) {}
+  try {
+    document.dispatchEvent(new Event('visibilitychange'));
+  } catch (e) {}
+})();
+"""
+
+
+# Проверка: на странице есть хотя бы N карточек с реальными ценами.
+# Используется как условие готовности перед извлечением.
+# Возвращает {cards: <всего>, priced: <с ценой>}.
+_DNS_PRICE_READY_JS = r"""
+return (function () {
+  var cards = document.getElementsByClassName('catalog-product');
+  var priced = 0;
+  for (var i = 0; i < cards.length; i++) {
+    var c = cards[i];
+    var hasClass =
+      c.getElementsByClassName('product-buy__price').length > 0 ||
+      c.getElementsByClassName('catalog-product__price').length > 0 ||
+      c.getElementsByClassName('ui-kit-price__main').length > 0;
+    if (hasClass) { priced++; continue; }
+    // fallback: ищем символ рубля
+    if ((c.innerText || c.textContent || '').indexOf('₽') !== -1) {
+      priced++;
+    }
+  }
+  return { cards: cards.length, priced: priced };
+})();
+"""
+
+
 DNS_BLOCKED_MSG = (
     'DNS открыл страницу «доступ запрещён» (403): блокировка по IP/сети на стороне сайта, '
     'не из‑за headless. Попробуйте другую сеть, VPN с выходом в РФ, или прокси в PROXY_LIST. '
@@ -566,6 +659,72 @@ class DNSParser(ChromeDriverMixin, BaseParser):
             float(getattr(settings, 'DNS_CATALOG_SCROLL_PAUSE_MORE_MAX', 4.5)),
         )
 
+    def _get_driver(self) -> Any:  # type: ignore[override]
+        # Расширяем базовый _get_driver: после первого создания драйвера
+        # инжектим скрипт «всегда видим/в фокусе» через CDP. Делает это
+        # один раз на сессию — далее скрипт автоматически применяется к
+        # каждой новой странице (включая редиректы и iframe).
+        is_new = self._driver is None
+        driver = super()._get_driver()
+        if is_new:
+            try:
+                driver.execute_cdp_cmd(
+                    'Page.addScriptToEvaluateOnNewDocument',
+                    {'source': _DNS_FORCE_FOREGROUND_JS},
+                )
+                logger.info(
+                    'DNS: инжектирован visibility-override (off-screen окно '
+                    'будет считаться видимым со стороны JS DNS).'
+                )
+            except Exception:
+                logger.warning(
+                    'DNS: не удалось добавить visibility-override через CDP. '
+                    'Парсинг при свёрнутом окне может вернуть карточки без цен.',
+                    exc_info=True,
+                )
+        return driver
+
+    def _wait_for_prices(
+        self,
+        driver: Any,
+        *,
+        min_priced: int = 6,
+        timeout: float = 25.0,
+        poll: float = 0.6,
+    ) -> tuple[int, int]:
+        """Ждёт, пока на странице появятся цены у достаточного числа карточек.
+
+        DNS подгружает цены асинхронно после первого user-events / появления
+        в области просмотра. Без этой паузы парсер видит карточки, но цены
+        ещё не отрисованы, и извлечение возвращает 0.
+        """
+        deadline = time.time() + max(1.0, timeout)
+        last: tuple[int, int] = (0, 0)
+        while time.time() < deadline:
+            try:
+                info = driver.execute_script(_DNS_PRICE_READY_JS) or {}
+                cards = int(info.get('cards') or 0)
+                priced = int(info.get('priced') or 0)
+            except Exception:
+                cards, priced = 0, 0
+            last = (cards, priced)
+            if cards > 0 and priced >= min(min_priced, cards):
+                return last
+            # Будим страницу: каждый тик имитируем активность и микро-скролл.
+            try:
+                driver.execute_script(_DNS_NUDGE_ACTIVITY_JS)
+            except Exception:
+                pass
+            try:
+                driver.execute_script(
+                    'window.scrollBy({top: arguments[0], behavior: "instant"});',
+                    120 if int(time.time()) % 2 == 0 else -120,
+                )
+            except Exception:
+                pass
+            time.sleep(poll)
+        return last
+
     def _check_dns_blocked(self, driver: Any) -> None:
         te = self._selenium_exceptions
         title = ''
@@ -597,6 +756,12 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         self._driver_get(driver, url)
         time.sleep(2)
         self._check_dns_blocked(driver)
+        # Сразу после загрузки имитируем активность — это будит JS DNS
+        # и запускает первичную загрузку цен.
+        try:
+            driver.execute_script(_DNS_NUDGE_ACTIVITY_JS)
+        except Exception:
+            pass
 
     def parse_category(self, category_url: str) -> list[ParsedProduct]:
         cu = (category_url or '').strip()
@@ -649,6 +814,29 @@ class DNSParser(ChromeDriverMixin, BaseParser):
 
         product_elements = driver.find_elements(self._by.CLASS_NAME, 'catalog-product')
         logger.info('Найдено элементов на странице: %d', len(product_elements))
+
+        # Перед извлечением убеждаемся, что цены уже отрисованы.
+        # При off-screen / свёрнутом окне DNS подгружает цены лениво,
+        # и без этой паузы получаем карточки без price-элементов.
+        prices_timeout = float(getattr(settings, 'DNS_PRICES_WAIT_TIMEOUT', 30.0))
+        cards_seen, priced = self._wait_for_prices(
+            driver,
+            min_priced=max(1, min(8, len(product_elements))),
+            timeout=prices_timeout,
+        )
+        if cards_seen and priced < cards_seen:
+            logger.info(
+                'DNS: цены подгружены у %d / %d карточек (timeout=%.0fs).',
+                priced, cards_seen, prices_timeout,
+            )
+        if cards_seen and priced == 0:
+            logger.warning(
+                'DNS: за %.0fs ни у одной из %d карточек не появилась цена. '
+                'Похоже, страница «не активна» с точки зрения JS DNS '
+                '(visibility/focus override не сработал). Извлечение всё равно '
+                'попытаемся, но скорее всего вернёт 0 товаров.',
+                prices_timeout, cards_seen,
+            )
 
         rows = self._extract_rows_via_js(driver)
         if rows:
