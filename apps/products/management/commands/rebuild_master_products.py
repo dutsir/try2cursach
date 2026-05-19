@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 
@@ -11,6 +13,7 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from apps.products.dedupe.audit import enqueue_review, write_audit
+from apps.products.dedupe.embedding import embedding_matching_disabled
 from apps.products.dedupe.matcher import find_master
 from apps.products.dedupe.merger import rollback_run
 from apps.products.dedupe.normalizer import normalize_offer
@@ -44,6 +47,28 @@ class Command(BaseCommand):
         parser.add_argument(
             '--cooldown-hours', type=int, default=24,
             help='Cooldown в часах: оффер не двигаем между Product чаще этого окна.',
+        )
+        parser.add_argument(
+            '--no-embedding',
+            action='store_true',
+            help='Только правила/MPN/specs/Dice, без semantic embedding (без HuggingFace).',
+        )
+        parser.add_argument(
+            '--progress-every',
+            type=int,
+            default=500,
+            help='Печатать прогресс каждые N офферов (0 = не печатать).',
+        )
+        parser.add_argument(
+            '--limit',
+            type=int,
+            default=0,
+            help='Обработать только первые N офферов (0 = все, для теста).',
+        )
+        parser.add_argument(
+            '--audit-all',
+            action='store_true',
+            help='Писать MergeAuditLog на каждый оффер (медленно). По умолчанию — только смены/review.',
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
@@ -84,12 +109,30 @@ class Command(BaseCommand):
                 args.extend(['--category', category_slug])
             call_command('rebuild_features', *args)
 
-        self._rebuild(
-            apply=apply,
-            category_slug=category_slug,
-            run_id=run_id,
-            cooldown_hours=max(0, int(options.get('cooldown_hours') or 0)),
-        )
+        no_embedding = bool(options.get('no_embedding'))
+        if no_embedding:
+            self.stdout.write(self.style.NOTICE(
+                'Semantic embedding отключён для этого прогона (--no-embedding).'
+            ))
+
+        rebuild_ctx = embedding_matching_disabled() if no_embedding else nullcontext()
+        total = self._count_offers(category_slug)
+        if total:
+            self.stdout.write(
+                f'  Офферов к обработке: {total} '
+                f'(прогресс каждые {int(options.get("progress_every") or 500)} шт.)'
+            )
+
+        with rebuild_ctx:
+            self._rebuild(
+                apply=apply,
+                category_slug=category_slug,
+                run_id=run_id,
+                cooldown_hours=max(0, int(options.get('cooldown_hours') or 0)),
+                progress_every=max(0, int(options.get('progress_every') or 500)),
+                limit=max(0, int(options.get('limit') or 0)),
+                audit_all=bool(options.get('audit_all')),
+            )
         self.stdout.write(self.style.SUCCESS(f'\nГотово. run_id={run_id}'))
 
     def _is_offer_in_cooldown(self, offer: Offer, cooldown_hours: int) -> bool:
@@ -102,8 +145,22 @@ class Command(BaseCommand):
             created_at__gte=cutoff,
         ).exclude(from_product_id=models.F('to_product_id')).exists()
 
+    def _count_offers(self, category_slug: str) -> int:
+        qs = Offer.objects.filter(product__isnull=False)
+        if category_slug:
+            qs = qs.filter(product__category__slug=category_slug)
+        return qs.count()
+
     def _rebuild(
-        self, *, apply: bool, category_slug: str, run_id: str, cooldown_hours: int,
+        self,
+        *,
+        apply: bool,
+        category_slug: str,
+        run_id: str,
+        cooldown_hours: int,
+        progress_every: int,
+        limit: int,
+        audit_all: bool,
     ) -> None:
         qs = Offer.objects.select_related('product', 'product__category').only(
             'id', 'product_id', 'source', 'url', 'source_sku', 'vendor_code',
@@ -115,11 +172,24 @@ class Command(BaseCommand):
 
         decisions: Counter[str] = Counter()
         product_changes = 0
+        audits_written = 0
         scanned = 0
         orphan_candidates: set[int] = set()
+        t0 = time.monotonic()
 
         for offer in qs.iterator(chunk_size=500):
             scanned += 1
+            if limit and scanned > limit:
+                break
+            if progress_every and scanned % progress_every == 0:
+                elapsed = time.monotonic() - t0
+                rate = scanned / elapsed if elapsed > 0 else 0.0
+                self.stdout.write(
+                    f'  … {scanned} офферов, '
+                    f'{rate:.1f} офф/с, '
+                    f'смен product: {product_changes}, '
+                    f'аудит: {audits_written}'
+                )
             current_product = offer.product
             if current_product is None:
                 continue
@@ -149,6 +219,11 @@ class Command(BaseCommand):
 
             actor = MergeAuditLog.Actor.MIGRATION if apply else MergeAuditLog.Actor.SHADOW
 
+            def _audit(**kwargs: Any) -> None:
+                nonlocal audits_written
+                write_audit(**kwargs)
+                audits_written += 1
+
             if (
                 result.decision == 'auto_merge'
                 and target_product is not None
@@ -156,7 +231,7 @@ class Command(BaseCommand):
             ):
                 if self._is_offer_in_cooldown(offer, cooldown_hours):
                     decisions['cooldown_skipped'] += 1
-                    write_audit(
+                    _audit(
                         offer=offer,
                         decision=MergeAuditLog.Decision.REVIEW,
                         actor=actor,
@@ -176,7 +251,7 @@ class Command(BaseCommand):
                     with transaction.atomic():
                         offer.product = target_product
                         offer.save(update_fields=['product', 'updated_at'])
-                        write_audit(
+                        _audit(
                             offer=offer,
                             decision=decision_dec,
                             actor=actor,
@@ -188,7 +263,7 @@ class Command(BaseCommand):
                         )
                     orphan_candidates.add(current_product.pk)
                 else:
-                    write_audit(
+                    _audit(
                         offer=offer,
                         decision=decision_dec,
                         actor=actor,
@@ -206,7 +281,7 @@ class Command(BaseCommand):
                         score=result.score,
                         signals=result.signals,
                     )
-                write_audit(
+                _audit(
                     offer=offer,
                     decision=decision_dec,
                     actor=actor,
@@ -216,10 +291,8 @@ class Command(BaseCommand):
                     to_product=target_product,
                     run_id=run_id,
                 )
-            else:
-
-
-                write_audit(
+            elif audit_all:
+                _audit(
                     offer=offer,
                     decision=decision_dec,
                     actor=actor,
@@ -230,8 +303,10 @@ class Command(BaseCommand):
                     run_id=run_id,
                 )
 
+        elapsed_total = time.monotonic() - t0
         self.stdout.write('')
-        self.stdout.write(f'  Просмотрено офферов: {scanned}')
+        self.stdout.write(f'  Просмотрено офферов: {scanned} за {elapsed_total:.0f} с')
+        self.stdout.write(f'  Записей MergeAuditLog: {audits_written}')
         for k, v in decisions.most_common():
             self.stdout.write(f'    {k}: {v}')
         self.stdout.write(f'  product_id изменён у: {product_changes}')

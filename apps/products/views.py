@@ -11,7 +11,50 @@ from django.views.decorators.http import require_GET
 from apps.prices.models import PriceHistory
 from apps.prices.stats import compute_product_price_stats
 
-from .models import Category, Product
+from .models import Category, Offer, Product
+
+_LEGACY_SOURCE_URL_MARKERS: dict[str, tuple[str, ...]] = {
+    'dns': ('dns-shop.ru', 'dns-shop.com'),
+    'citilink': ('citilink.ru',),
+    'ozon': ('ozon.ru',),
+}
+
+
+def _url_matches_source(url: str, source: str) -> bool:
+    low = (url or '').lower()
+    if not low:
+        return False
+    return any(m in low for m in _LEGACY_SOURCE_URL_MARKERS.get(source, ()))
+
+
+def _append_legacy_offer_rows(product: Product, offer_rows: list[dict[str, Any]]) -> None:
+    seen_sources = {row['offer'].source for row in offer_rows}
+    for src_value, _label in PriceHistory.Source.choices:
+        if src_value in seen_sources:
+            continue
+        last = (
+            PriceHistory.objects
+            .filter(product=product, source=src_value, is_actual=True)
+            .order_by('-timestamp')
+            .first()
+        )
+        if not last:
+            continue
+        url = (product.url or '').strip()
+        if not _url_matches_source(url, src_value):
+            continue
+        offer_rows.append({
+            'offer': Offer(
+                product=product,
+                source=src_value,
+                url=url[:1024],
+                vendor_code=(product.vendor_code or '')[:128],
+                is_available=True,
+            ),
+            'price': last.price,
+            'old_price': last.old_price if last.old_price else None,
+            'last_timestamp': last.timestamp,
+        })
 
 
 @require_GET
@@ -112,6 +155,7 @@ def category_detail(request, slug: str):
     for p in products:
         prices = price_by_product.get(p.pk, [])
         valid = [x for x in prices if x.offer_id]
+        legacy = [x for x in prices if not x.offer_id]
         if valid:
             in_stock = [x for x in valid if x.offer and x.offer.is_available]
             pool = in_stock if in_stock else valid
@@ -120,6 +164,14 @@ def category_detail(request, slug: str):
             best_source = best.offer.get_source_display() if best.offer else ''
             best_url = best.offer.url if best.offer else p.url
             offers_count = len({x.offer_id for x in valid})
+            if legacy:
+                offers_count += len({x.source for x in legacy})
+        elif legacy:
+            best = min(legacy, key=lambda x: x.price)
+            best_price = best.price
+            best_source = dict(PriceHistory.Source.choices).get(best.source, best.source)
+            best_url = p.url if _url_matches_source(p.url, best.source) else p.url
+            offers_count = len({x.source for x in legacy})
         elif prices:
             best = min(prices, key=lambda x: x.price)
             best_price = best.price
@@ -180,6 +232,7 @@ def product_detail(request, slug: str):
             'last_timestamp': last.timestamp if last else offer.last_seen_at,
         })
 
+    _append_legacy_offer_rows(product, offer_rows)
 
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in offer_rows:

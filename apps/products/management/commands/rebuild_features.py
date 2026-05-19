@@ -162,7 +162,7 @@ class Command(BaseCommand):
                 p.specs_fingerprint = merged
                 updates.append('specs_fingerprint')
 
-            new_hash = features.key_hash()
+            new_hash = features.key_hash
             if new_hash != (p.key_hash or ''):
                 p.key_hash = new_hash
                 updates.append('key_hash')

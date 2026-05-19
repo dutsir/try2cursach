@@ -17,6 +17,12 @@ class CategoryListingSerializer(serializers.ModelSerializer):
         fields = ('id', 'source', 'source_display', 'external_path', 'is_active')
 
 
+class CategoryMinimalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ('id', 'name', 'slug')
+
+
 class CategorySerializer(serializers.ModelSerializer):
 
     store_listings = CategoryListingSerializer(source='listings', many=True, read_only=True)
@@ -109,7 +115,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = (
-            'id', 'name', 'slug', 'category', 'vendor_code',
+            'id', 'name', 'slug', 'brand', 'category', 'vendor_code',
             'image_url', 'is_active', 'last_parsed_at', 'best_offer',
         )
 

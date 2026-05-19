@@ -22,7 +22,11 @@ interface Props {
 export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Product | null>(preselectedProduct ?? null)
-  const [targetPrice, setTargetPrice] = useState('')
+  const [targetPrice, setTargetPrice] = useState(() =>
+    preselectedProduct?.best_offer?.price
+      ? String(Math.round(preselectedProduct.best_offer.price * 0.9))
+      : ''
+  )
   const debouncedQuery = useDebounce(query, 400)
   const qc = useQueryClient()
   const { toast } = useToast()

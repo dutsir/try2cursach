@@ -45,6 +45,7 @@ class Features:
             source_sku=data.get('source_sku', '') or '',
         )
 
+    @property
     def key_hash(self) -> str:
         parts: list[str] = [self.brand or '', self.model_code or '']
         for k in ('ram_gb', 'storage_gb', 'screen_in', 'cpu_family', 'gpu_family', 'variant_key'):

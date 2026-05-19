@@ -1,17 +1,15 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Heart, Plus, Trash2, AlertCircle, Edit2, ExternalLink } from 'lucide-react'
+import { Plus, Trash2, ExternalLink, Edit2 } from 'lucide-react'
 import { api } from '@/api/client'
 import type { Wishlist, WishlistItem } from '@/types'
-import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
-import { formatPrice } from '@/lib/utils'
+import { cn, formatPrice, formatRelativeDate } from '@/lib/utils'
 import { useDebounce } from '@/hooks/useDebounce'
 
 interface ProductSearchResult {
@@ -69,7 +67,7 @@ export default function WishlistPage() {
   })
 
   const deleteItemMutation = useMutation({
-    mutationFn: (itemId: number) => api.delete(`/api/wishlist/remove_item/${itemId}`),
+    mutationFn: (itemId: number) => api.delete(`/api/wishlist/remove-item/${itemId}/`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['wishlist'] })
       toast('Товар удалён из вишлиста', 'info')
@@ -87,182 +85,183 @@ export default function WishlistPage() {
 
   if (isLoading) return <PageSpinner />
 
-  const items = wishlist?.items ?? []
+  const rawItems: WishlistItem[] = wishlist?.items ?? []
+  const items = [...rawItems].sort((a, b) => {
+    const aAvail = a.product.best_offer ? 1 : 0
+    const bAvail = b.product.best_offer ? 1 : 0
+    if (aAvail !== bAvail) return bAvail - aAvail
+    return new Date(b.added_at).getTime() - new Date(a.added_at).getTime()
+  })
   const totalPrice = wishlist?.total_price ?? 0
+  const totalUnits = items.reduce((sum, i) => sum + i.quantity, 0)
+  const availableCount = items.filter(i => i.product.best_offer).length
+  const unavailableCount = items.length - availableCount
 
   return (
     <>
-      <div className="mb-8 flex flex-col gap-6">
-        {/* Title */}
-        <motion.div
-          className="flex items-center justify-between"
-          initial={{ opacity: 0, y: -12 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <div className="flex items-center gap-3">
-            <Heart size={28} className="text-red-400 fill-red-400" />
-            <div>
-              {editTitle ? (
-                <div className="flex gap-2">
-                  <Input
-                    value={newTitle}
-                    onChange={e => setNewTitle(e.target.value)}
-                    placeholder={wishlist?.title}
-                    className="w-48"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={() => updateTitleMutation.mutate()}
-                    loading={updateTitleMutation.isPending}
-                  >
-                    Сохранить
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <h1 className="text-3xl font-bold text-white">{wishlist?.title}</h1>
-                  <button
-                    onClick={() => {
-                      setNewTitle(wishlist?.title ?? '')
-                      setEditTitle(true)
-                    }}
-                    className="text-white/40 hover:text-white transition"
-                  >
-                    <Edit2 size={18} />
-                  </button>
-                </div>
-              )}
-              <p className="text-sm text-white/50">{items.length} товаров на сумму {formatPrice(totalPrice)}</p>
+      <div className="mb-6">
+        <div className="flex items-center justify-between gap-4">
+          {editTitle ? (
+            <div className="flex flex-1 gap-2">
+              <Input
+                value={newTitle}
+                onChange={e => setNewTitle(e.target.value)}
+                placeholder={wishlist?.title}
+                className="max-w-xs"
+              />
+              <Button size="sm" onClick={() => updateTitleMutation.mutate()} loading={updateTitleMutation.isPending}>
+                Сохранить
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setEditTitle(false)}>
+                Отмена
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-white">{wishlist?.title || 'Мой вишлист'}</h1>
+              <button
+                onClick={() => { setNewTitle(wishlist?.title ?? ''); setEditTitle(true) }}
+                className="text-steam-muted hover:text-steam-blue transition-colors"
+                title="Изменить название"
+              >
+                <Edit2 size={15} />
+              </button>
+            </div>
+          )}
+          <Button variant="green" onClick={() => setAddItemOpen(true)}>
+            <Plus size={14} /> Добавить товар
+          </Button>
+        </div>
+        <div className="h-px bg-steam-border mt-3" />
+
+        {items.length > 0 && (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
+              <p className="text-[10px] uppercase tracking-wider text-steam-muted">Товаров</p>
+              <p className="text-xl font-bold text-steam-light mt-1">{items.length}</p>
+            </div>
+            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
+              <p className="text-[10px] uppercase tracking-wider text-steam-muted">Единиц</p>
+              <p className="text-xl font-bold text-steam-light mt-1">{totalUnits}</p>
+            </div>
+            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
+              <p className="text-[10px] uppercase tracking-wider text-steam-muted">В наличии</p>
+              <p className="text-xl font-bold text-steam-light mt-1">
+                <span className="text-steam-green">{availableCount}</span>
+                {unavailableCount > 0 && (
+                  <span className="text-steam-muted text-sm font-normal"> / {items.length}</span>
+                )}
+              </p>
+            </div>
+            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
+              <p className="text-[10px] uppercase tracking-wider text-steam-muted">Сумма</p>
+              <p className="text-xl font-bold text-steam-green mt-1">{formatPrice(totalPrice)}</p>
             </div>
           </div>
-          <Button onClick={() => setAddItemOpen(true)}>
-            <Plus size={16} /> Добавить товар
-          </Button>
-        </motion.div>
-
-        {/* Stats */}
-        {items.length > 0 && (
-          <motion.div
-            className="grid grid-cols-2 gap-3 sm:grid-cols-3"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.1 }}
-          >
-            <Card className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-2xl font-bold text-white">{items.length}</p>
-                <p className="text-xs text-white/50">Товаров</p>
-              </div>
-              <div className="text-3xl opacity-20">📦</div>
-            </Card>
-            <Card className="flex items-center justify-between p-4">
-              <div>
-                <p className="text-2xl font-bold text-white">{items.reduce((sum, i) => sum + i.quantity, 0)}</p>
-                <p className="text-xs text-white/50">Единиц</p>
-              </div>
-              <div className="text-3xl opacity-20">🔢</div>
-            </Card>
-            <Card className="col-span-2 flex items-center justify-between p-4 sm:col-span-1">
-              <div>
-                <p className="text-lg font-bold text-white">{formatPrice(totalPrice)}</p>
-                <p className="text-xs text-white/50">Сумма</p>
-              </div>
-              <div className="text-3xl opacity-20">💰</div>
-            </Card>
-          </motion.div>
         )}
       </div>
 
-      {/* Items list */}
       {items.length === 0 ? (
-        <motion.div
-          className="flex flex-col items-center gap-4 py-24 text-white/40"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        >
-          <Heart size={56} strokeWidth={1} />
-          <p className="text-xl font-medium">Вишлист пуст</p>
-          <p className="text-sm">Добавьте товары, которые хотите купить позже</p>
-          <Button onClick={() => setAddItemOpen(true)} className="mt-2">
-            <Plus size={16} /> Добавить товар
+        <div className="bg-steam-card border border-steam-border rounded-steam py-16 flex flex-col items-center gap-3 text-steam-muted">
+          <p className="text-base text-steam-light">Вишлист пуст</p>
+          <p className="text-xs">Добавьте товары, которые хотите купить позже</p>
+          <Button variant="green" className="mt-2" onClick={() => setAddItemOpen(true)}>
+            <Plus size={14} /> Добавить товар
           </Button>
-        </motion.div>
+        </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          <AnimatePresence>
-            {items.map((item, i) => (
-              <motion.div
+        <div className="flex flex-col">
+          {items.map((item) => {
+            const available = !!item.product.best_offer
+            return (
+              <div
                 key={item.id}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                transition={{ delay: i * 0.05 }}
+                className={cn(
+                  'bg-steam-card border rounded-steam mb-2 p-3 flex flex-col gap-3 sm:flex-row sm:items-center transition-colors',
+                  available
+                    ? 'border-steam-border hover:border-steam-blue/40'
+                    : 'border-steam-border/40 opacity-60',
+                )}
               >
-                <Card className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="truncate font-semibold text-white">{item.product.name}</h3>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-semibold text-steam-light truncate">{item.product.name}</h3>
+                    {!available && (
+                      <Badge variant="danger">Нет в наличии</Badge>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 mt-0.5">
                     {item.product.brand && (
-                      <p className="text-xs text-white/40">{item.product.brand}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-steam-muted">{item.product.brand}</p>
                     )}
-                    {item.note && (
-                      <p className="mt-2 text-sm text-white/60 italic">{item.note}</p>
-                    )}
+                    <p className="text-[10px] text-steam-dim" title={item.added_at}>
+                      Добавлен {formatRelativeDate(item.added_at)}
+                    </p>
+                  </div>
+                  {item.note && (
+                    <p className="mt-2 text-xs text-steam-muted italic border-l-2 border-steam-border pl-2">{item.note}</p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-5 sm:justify-end">
+                  {item.product.best_offer ? (
+                    <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-wider text-steam-muted">Цена</p>
+                      <p className="text-sm font-bold text-steam-light">{formatPrice(item.product.best_offer.price)}</p>
+                      <Badge variant="ghost" className="mt-0.5">{item.product.best_offer.source}</Badge>
+                    </div>
+                  ) : (
+                    <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-wider text-steam-muted">Цена</p>
+                      <p className="text-sm text-steam-dim">—</p>
+                    </div>
+                  )}
+
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase tracking-wider text-steam-muted">Кол-во</p>
+                    <p className="text-sm font-bold text-steam-light">{item.quantity}</p>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-4 sm:justify-end">
-                    {item.product.best_offer && (
-                      <div>
-                        <p className="text-right text-sm text-white/60">Цена за единицу</p>
-                        <p className="text-lg font-bold text-white">{formatPrice(item.product.best_offer.price)}</p>
-                        <Badge variant="ghost" className="mt-1">
-                          {item.product.best_offer.source}
-                        </Badge>
-                      </div>
-                    )}
+                  <div className="text-right">
+                    <p className="text-[10px] uppercase tracking-wider text-steam-muted">Сумма</p>
+                    <p className={cn(
+                      'text-sm font-bold',
+                      available ? 'text-steam-green' : 'text-steam-dim',
+                    )}>
+                      {item.product.best_offer
+                        ? formatPrice(item.product.best_offer.price * item.quantity)
+                        : '—'}
+                    </p>
+                  </div>
 
-                    <div>
-                      <p className="text-right text-sm text-white/60">Количество</p>
-                      <p className="text-lg font-bold text-white">{item.quantity}</p>
-                    </div>
-
-                    {item.product.best_offer && (
-                      <div>
-                        <p className="text-right text-sm text-white/60">Сумма</p>
-                        <p className="text-lg font-bold text-brand-300">
-                          {formatPrice(item.product.best_offer.price * item.quantity)}
-                        </p>
-                      </div>
-                    )}
-
-                    <div className="flex shrink-0 gap-1">
-                      {item.product.best_offer?.url && (
-                        <a
-                          href={item.product.best_offer.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="rounded-lg p-1.5 text-white/40 transition hover:bg-white/10 hover:text-white"
-                        >
-                          <ExternalLink size={15} />
-                        </a>
-                      )}
-                      <Button
-                        size="icon"
-                        variant="danger"
-                        loading={deleteItemMutation.isPending}
-                        onClick={() => deleteItemMutation.mutate(item.id)}
+                  <div className="flex items-center gap-1">
+                    {item.product.best_offer?.url && (
+                      <a
+                        href={item.product.best_offer.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Открыть в магазине"
+                        className="p-1.5 rounded-steam text-steam-muted hover:bg-steam-panel hover:text-steam-blue transition-colors"
                       >
-                        <Trash2 size={15} />
-                      </Button>
-                    </div>
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
+                    <button
+                      onClick={() => deleteItemMutation.mutate(item.id)}
+                      disabled={deleteItemMutation.isPending}
+                      title="Удалить из вишлиста"
+                      className="p-1.5 rounded-steam text-steam-muted hover:bg-[#5a1a1a] hover:text-white transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
-                </Card>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
 
-      {/* Add item modal */}
       <Modal open={addItemOpen} onClose={() => setAddItemOpen(false)} title="Добавить товар в вишлист">
         <div className="flex flex-col gap-4">
           <Input
@@ -272,26 +271,23 @@ export default function WishlistPage() {
           />
 
           {debouncedSearch.length > 1 && (
-            <div className="max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-white/5">
+            <div className="max-h-56 overflow-y-auto border border-steam-border rounded-steam bg-steam-darker">
               {searchResults?.results && searchResults.results.length > 0 ? (
                 <ul>
                   {searchResults.results.map(product => (
                     <li key={product.id}>
                       <button
-                        onClick={() => {
-                          setSelectedProduct(product)
-                          setSearch(product.name)
-                        }}
-                        className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-white/10"
+                        onClick={() => { setSelectedProduct(product); setSearch(product.name) }}
+                        className="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-steam-panel border-b border-steam-border/50 last:border-0"
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="truncate font-medium text-white">{product.name}</p>
+                          <p className="truncate text-sm font-medium text-steam-light">{product.name}</p>
                           {product.brand && (
-                            <p className="text-xs text-white/40">{product.brand}</p>
+                            <p className="text-[10px] uppercase tracking-wider text-steam-muted">{product.brand}</p>
                           )}
                         </div>
                         {product.best_offer && (
-                          <p className="shrink-0 font-semibold text-white">
+                          <p className="shrink-0 text-sm font-bold text-steam-green">
                             {formatPrice(product.best_offer.price)}
                           </p>
                         )}
@@ -300,7 +296,7 @@ export default function WishlistPage() {
                   ))}
                 </ul>
               ) : (
-                <div className="px-4 py-6 text-center text-sm text-white/40">
+                <div className="px-4 py-6 text-center text-xs text-steam-muted">
                   Ничего не найдено
                 </div>
               )}
@@ -308,45 +304,46 @@ export default function WishlistPage() {
           )}
 
           {selectedProduct && (
-            <div className="flex items-center gap-2 rounded-lg bg-brand-600/20 px-4 py-3">
-              <div className="flex-1">
-                <p className="font-semibold text-white">{selectedProduct.name}</p>
+            <div className="flex items-center gap-2 bg-steam-darker border border-steam-blue/40 rounded-steam px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-sm font-semibold text-steam-light">{selectedProduct.name}</p>
                 {selectedProduct.best_offer && (
-                  <p className="text-sm text-brand-300">{formatPrice(selectedProduct.best_offer.price)}</p>
+                  <p className="text-xs text-steam-green font-bold">{formatPrice(selectedProduct.best_offer.price)}</p>
                 )}
               </div>
             </div>
           )}
 
           <div>
-            <label className="text-xs font-medium text-white/60">Количество</label>
+            <label className="text-[10px] uppercase tracking-wider text-steam-muted">Количество</label>
             <Input
               type="number"
               min="1"
               value={quantity}
               onChange={e => setQuantity(e.target.value)}
-              className="mt-1.5"
+              className="mt-1"
             />
           </div>
 
           <div>
-            <label className="text-xs font-medium text-white/60">Заметка (опционально)</label>
+            <label className="text-[10px] uppercase tracking-wider text-steam-muted">Заметка</label>
             <textarea
               value={note}
               onChange={e => setNote(e.target.value)}
-              className="mt-1.5 w-full rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              className="mt-1 w-full rounded-steam border border-steam-border bg-steam-darker px-3 py-2 text-sm text-steam-light placeholder-steam-muted focus:border-steam-blue focus:outline-none"
               rows={2}
               placeholder="Например, нужна версия 16 ГБ..."
             />
           </div>
 
           <Button
+            variant="green"
             className="w-full"
             disabled={!selectedProduct || !quantity || parseInt(quantity) < 1}
             loading={addItemMutation.isPending}
             onClick={() => addItemMutation.mutate()}
           >
-            <Plus size={16} /> Добавить в вишлист
+            <Plus size={14} /> Добавить в вишлист
           </Button>
         </div>
       </Modal>

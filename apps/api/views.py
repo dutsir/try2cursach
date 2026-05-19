@@ -1,4 +1,6 @@
 from django.contrib.auth import authenticate, login, logout
+from django.views.decorators.csrf import csrf_exempt
+from django_filters import FilterSet, CharFilter
 from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.request import Request
@@ -8,10 +10,12 @@ from apps.alerts.models import Notification, Subscription, Wishlist, WishlistIte
 from apps.analytics.models import Anomaly
 from apps.core.models import User
 from apps.prices.models import PriceHistory
-from apps.products.models import Offer, Product
+from apps.products.models import Category, Offer, Product
 
 from .serializers import (
     AnomalySerializer,
+    CategoryMinimalSerializer,
+    CategorySerializer,
     NotificationSerializer,
     OfferSerializer,
     PriceHistorySerializer,
@@ -25,6 +29,23 @@ from .serializers import (
 )
 
 
+class ProductFilterSet(FilterSet):
+    source = CharFilter(field_name='offers__source', distinct=True)
+    category_slug = CharFilter(method='filter_category_slug')
+
+    def filter_category_slug(self, queryset, name, value):
+        try:
+            cat = Category.objects.get(slug=value, is_active=True)
+            ids = cat.descendants_ids()
+            return queryset.filter(category_id__in=ids).distinct()
+        except Category.DoesNotExist:
+            return queryset.none()
+
+    class Meta:
+        model = Product
+        fields = ['category', 'is_active']
+
+
 class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = (
         Product.objects
@@ -33,7 +54,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         .prefetch_related('offers', 'category__listings')
     )
     permission_classes = [permissions.AllowAny]
-    filterset_fields = ['category__slug', 'is_active']
+    filterset_class = ProductFilterSet
     search_fields = ['name', 'vendor_code']
     ordering_fields = ['name', 'last_parsed_at', 'created_at']
 
@@ -53,6 +74,23 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         product = self.get_object()
         offers = product.offers.all().order_by('source')
         return Response(OfferSerializer(offers, many=True).data)
+
+
+class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Category.objects.filter(is_active=True).order_by('name')
+    permission_classes = [permissions.AllowAny]
+    filterset_fields = ['parent']
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return CategoryMinimalSerializer
+        return CategorySerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.query_params.get('root'):
+            qs = qs.filter(parent__isnull=True)
+        return qs
 
 
 class OfferViewSet(viewsets.ReadOnlyModelViewSet):

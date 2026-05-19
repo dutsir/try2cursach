@@ -5,8 +5,13 @@ import { User, Mail, Lock, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useToast } from '@/components/ui/Toast'
+import type { User as UserType } from '@/types'
 
-export default function Register() {
+interface RegisterProps {
+  onRegister?: (user: UserType) => void
+}
+
+export default function Register({ onRegister }: RegisterProps) {
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -47,8 +52,10 @@ export default function Register() {
       })
 
       if (res.ok) {
-        toast('Регистрация успешна! Войдите в аккаунт', 'success')
-        setTimeout(() => navigate('/login'), 500)
+        const user = await res.json()
+        toast('Регистрация успешна!', 'success')
+        onRegister?.(user)
+        setTimeout(() => navigate('/'), 300)
       } else {
         const err = await res.json()
         setError(Object.values(err).flat()[0] as string || 'Ошибка регистрации')

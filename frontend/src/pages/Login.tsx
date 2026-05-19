@@ -5,9 +5,13 @@ import { Mail, Lock, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useToast } from '@/components/ui/Toast'
-import { formatPrice } from '@/lib/utils'
+import type { User } from '@/types'
 
-export default function Login() {
+interface LoginProps {
+  onLogin?: (user: User) => void
+}
+
+export default function Login({ onLogin }: LoginProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -28,8 +32,10 @@ export default function Login() {
       })
 
       if (res.ok) {
+        const user = await res.json()
+        onLogin?.(user)
         toast('Вы вошли в систему', 'success')
-        setTimeout(() => navigate('/'), 500)
+        setTimeout(() => navigate('/'), 300)
       } else {
         const err = await res.json()
         toast(err.error || 'Неверный логин или пароль', 'error')

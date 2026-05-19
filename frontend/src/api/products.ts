@@ -3,11 +3,18 @@ import type { PaginatedResponse, Product, ProductDetail, PriceHistory } from '@/
 
 export interface ProductsParams {
   search?: string
-  category?: number
+  category?: number | string
+  category_slug?: string
   ordering?: string
   page?: number
   page_size?: number
   source?: string
+}
+
+export interface Category {
+  id: number
+  name: string
+  slug: string
 }
 
 export const productsApi = {
@@ -22,4 +29,9 @@ export const productsApi = {
 
   offers: (id: number) =>
     api.get<{ results: import('@/types').Offer[] }>(`/api/products/${id}/offers/`),
+}
+
+export const categoriesApi = {
+  list: () =>
+    api.get<PaginatedResponse<Category>>('/api/categories/', { page_size: 200, root: true }),
 }

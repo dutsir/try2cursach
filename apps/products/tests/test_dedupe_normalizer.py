@@ -229,7 +229,7 @@ class TestNormalizeOffer:
             source='ozon', category_id=1, sku='', url='',
         )
 
-        assert f1.key_hash() == f2.key_hash()
+        assert f1.key_hash == f2.key_hash
 
 
 class TestVariantUrl:

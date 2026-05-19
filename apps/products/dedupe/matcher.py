@@ -11,7 +11,7 @@ from django.db.models import Q
 from ..models import Product
 from .embedding import (
     auto_merge_threshold as embedding_auto_threshold,
-    embedding_enabled,
+    embedding_matching_enabled,
     find_embedding_match,
     review_threshold as embedding_review_threshold,
 )
@@ -65,7 +65,7 @@ def hard_reject(product: Product, features: Features) -> tuple[bool, str]:
 
 
     p_key_hash = (product.key_hash or '').strip()
-    f_key_hash = (features.key_hash or '').strip() if hasattr(features, 'key_hash') else ''
+    f_key_hash = (features.key_hash or '').strip()
     if p_key_hash and f_key_hash and p_key_hash != f_key_hash:
         return True, 'key_hash_mismatch'
 
@@ -160,7 +160,7 @@ def _try_embedding_match(
     raw_name: str = '',
     candidate_ids: list[int] | None = None,
 ) -> MatchResult | None:
-    if not embedding_enabled():
+    if not embedding_matching_enabled():
         return None
 
     try:

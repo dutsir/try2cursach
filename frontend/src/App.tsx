@@ -25,6 +25,11 @@ const qc = new QueryClient({
   },
 })
 
+function ProtectedRoute({ user, children }: any) {
+  if (!user) return <Navigate to="/login" replace />
+  return children
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -45,23 +50,21 @@ export default function App() {
           <Suspense fallback={<PageSpinner />}>
             <Routes>
               {/* Auth routes */}
-              {!user && (
-                <>
-                  <Route path="/login" element={<Login />} />
-                  <Route path="/register" element={<Register />} />
-                </>
-              )}
+              <Route path="/login" element={user ? <Navigate to="/" /> : <Login onLogin={setUser} />} />
+              <Route path="/register" element={user ? <Navigate to="/" /> : <Register onRegister={setUser} />} />
 
               {/* Protected routes with layout */}
-              {user && (
-                <Route element={<Layout user={user} onLogout={() => setUser(null)} />}>
-                  <Route path="/"                  element={<Catalog />} />
-                  <Route path="/wishlist"          element={<Wishlist />} />
-                  <Route path="/products/:id"      element={<ProductDetail />} />
-                  <Route path="/notifications"     element={<Notifications />} />
-                  <Route path="/anomalies"         element={<Anomalies />} />
-                </Route>
-              )}
+              <Route element={
+                <ProtectedRoute user={user}>
+                  <Layout user={user} onLogout={() => setUser(null)} />
+                </ProtectedRoute>
+              }>
+                <Route path="/"                  element={<Catalog />} />
+                <Route path="/wishlist"          element={<Wishlist />} />
+                <Route path="/products/:id"      element={<ProductDetail />} />
+                <Route path="/notifications"     element={<Notifications />} />
+                <Route path="/anomalies"         element={<Anomalies />} />
+              </Route>
 
               {/* Fallback redirects */}
               <Route path="*" element={<Navigate to={user ? "/" : "/login"} replace />} />
@@ -69,7 +72,7 @@ export default function App() {
           </Suspense>
         </BrowserRouter>
       </ToastProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
+      {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   )
 }

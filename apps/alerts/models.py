@@ -78,10 +78,19 @@ class Wishlist(BaseModel):
 
     @property
     def total_price(self) -> float:
-        return sum(
-            (item.product.best_offer.price if item.product.best_offer else 0) * item.quantity
-            for item in self.items.all()
-        )
+        from apps.prices.models import PriceHistory
+
+        total = 0.0
+        for item in self.items.all():
+            best = (
+                PriceHistory.objects
+                .filter(product=item.product, is_actual=True)
+                .order_by('price')
+                .first()
+            )
+            if best:
+                total += float(best.price) * item.quantity
+        return total
 
 
 class WishlistItem(BaseModel):

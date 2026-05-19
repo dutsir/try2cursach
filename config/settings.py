@@ -20,10 +20,19 @@ CSRF_TRUSTED_ORIGINS = [
     x.strip()
     for x in os.getenv(
         'CSRF_TRUSTED_ORIGINS',
-        'http://localhost,http://127.0.0.1',
+        'http://localhost:5173,http://localhost:8000,http://127.0.0.1:5173,http://127.0.0.1:8000',
     ).split(',')
     if x.strip()
 ]
+
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:5173',
+    'http://localhost:8000',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:8000',
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -115,7 +124,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication',
+        'apps.api.authentication.CsrfExemptSessionAuthentication',
         'rest_framework.authentication.TokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
@@ -193,6 +202,17 @@ DNS_CATALOG_ELEMENT_WAIT = int(os.getenv('DNS_CATALOG_ELEMENT_WAIT', '60'))
 DNS_PAGE_LOAD_TIMEOUT = int(os.getenv('DNS_PAGE_LOAD_TIMEOUT', '120'))
 DNS_CATALOG_SCROLL_MAX_ROUNDS = int(os.getenv('DNS_CATALOG_SCROLL_MAX_ROUNDS', '60'))
 DNS_CATALOG_SCROLL_STABLE = int(os.getenv('DNS_CATALOG_SCROLL_STABLE', '5'))
+DNS_CATALOG_SCROLL_MIN_ROUNDS = int(os.getenv('DNS_CATALOG_SCROLL_MIN_ROUNDS', '8'))
+DNS_CATALOG_SCROLL_PAUSE_MIN = float(os.getenv('DNS_CATALOG_SCROLL_PAUSE_MIN', '2.0'))
+DNS_CATALOG_SCROLL_PAUSE_MAX = float(os.getenv('DNS_CATALOG_SCROLL_PAUSE_MAX', '4.0'))
+DNS_CATALOG_SCROLL_PAUSE_SHORT_MIN = float(os.getenv('DNS_CATALOG_SCROLL_PAUSE_SHORT_MIN', '1.2'))
+DNS_CATALOG_SCROLL_PAUSE_SHORT_MAX = float(os.getenv('DNS_CATALOG_SCROLL_PAUSE_SHORT_MAX', '2.4'))
+DNS_CATALOG_SCROLL_PAUSE_MORE_MIN = float(os.getenv('DNS_CATALOG_SCROLL_PAUSE_MORE_MIN', '2.5'))
+DNS_CATALOG_SCROLL_PAUSE_MORE_MAX = float(os.getenv('DNS_CATALOG_SCROLL_PAUSE_MORE_MAX', '4.5'))
+DNS_CATALOG_SCROLL_SENTINEL_SELECTOR = os.getenv(
+    'DNS_CATALOG_SCROLL_SENTINEL_SELECTOR',
+    '.spoiler-text-description.spoiler-text-description_layer',
+).strip()
 DNS_SELENIUM_HTTP_TIMEOUT = int(os.getenv('DNS_SELENIUM_HTTP_TIMEOUT', '300'))
 DNS_SYNC_CATEGORY_COOLDOWN_MIN = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MIN', '45'))
 DNS_SYNC_CATEGORY_COOLDOWN_MAX = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MAX', '120'))
@@ -252,12 +272,17 @@ DEDUP_SHADOW = os.getenv('DEDUP_SHADOW', '0') == '1'
 DEDUP_AUTO_MERGE_THRESHOLD = float(os.getenv('DEDUP_AUTO_MERGE_THRESHOLD', '0.85'))
 DEDUP_REVIEW_THRESHOLD = float(os.getenv('DEDUP_REVIEW_THRESHOLD', '0.65'))
 
+DEDUP_REMATCH_ON_UPDATE = os.getenv('DEDUP_REMATCH_ON_UPDATE', '1') == '1'
+DEDUP_REMATCH_COOLDOWN_HOURS = int(os.getenv('DEDUP_REMATCH_COOLDOWN_HOURS', '24'))
 
 DEDUP_CROSS_SOURCE_SPECS_ENABLED = os.getenv('DEDUP_CROSS_SOURCE_SPECS_ENABLED', '1') == '1'
 DEDUP_CROSS_SOURCE_SPECS_MIN_MATCHED = int(os.getenv('DEDUP_CROSS_SOURCE_SPECS_MIN_MATCHED', '2'))
 
 
 DEDUP_EMBEDDING_ENABLED = os.getenv('DEDUP_EMBEDDING_ENABLED', '1') == '1'
+DEDUP_EMBEDDING_MATCH_ENABLED = os.getenv('DEDUP_EMBEDDING_MATCH_ENABLED', '1') == '1'
+DEDUP_HF_HUB_TIMEOUT = int(os.getenv('DEDUP_HF_HUB_TIMEOUT', '120'))
+DEDUP_EMBEDDING_LOCAL_FILES_ONLY = os.getenv('DEDUP_EMBEDDING_LOCAL_FILES_ONLY', '0') == '1'
 DEDUP_EMBEDDING_MODEL = os.getenv(
     'DEDUP_EMBEDDING_MODEL',
     'intfloat/multilingual-e5-base',

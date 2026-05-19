@@ -10,17 +10,17 @@ export function Input({ icon, className, ...props }: InputProps) {
   return (
     <div className="relative">
       {icon && (
-        <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-white/40">
+        <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-steam-muted">
           {icon}
         </div>
       )}
       <input
         {...props}
         className={cn(
-          'w-full rounded-xl border border-white/15 bg-white/10 px-4 py-2.5 text-white placeholder-white/40',
-          'focus:border-brand-500/50 focus:outline-none focus:ring-2 focus:ring-brand-500/30',
-          'transition-all duration-200',
-          icon && 'pl-10',
+          'w-full rounded-steam border border-steam-border bg-steam-darker px-3 py-2 text-sm text-steam-light placeholder-steam-muted',
+          'focus:border-steam-blue focus:outline-none',
+          'transition-colors duration-100',
+          icon && 'pl-9',
           className,
         )}
       />

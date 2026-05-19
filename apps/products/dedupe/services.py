@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -36,6 +36,34 @@ def is_v2_enabled() -> bool:
 
 def is_shadow_enabled() -> bool:
     return bool(getattr(settings, 'DEDUP_SHADOW', False))
+
+
+def _rematch_on_update_enabled() -> bool:
+    return bool(getattr(settings, 'DEDUP_REMATCH_ON_UPDATE', True))
+
+
+def _rematch_cooldown_hours() -> int:
+    return int(getattr(settings, 'DEDUP_REMATCH_COOLDOWN_HOURS', 24))
+
+
+def _audit_decision_for_match(decision: str) -> str:
+    return {
+        'auto_merge': MergeAuditLog.Decision.AUTO_MERGE,
+        'review': MergeAuditLog.Decision.REVIEW,
+        'new': MergeAuditLog.Decision.NEW,
+    }.get(decision, MergeAuditLog.Decision.NEW)
+
+
+def _is_offer_rematch_cooldown(offer: Offer) -> bool:
+    hours = _rematch_cooldown_hours()
+    if hours <= 0:
+        return False
+    cutoff = timezone.now() - timezone.timedelta(hours=hours)
+    return MergeAuditLog.objects.filter(
+        offer=offer,
+        decision=MergeAuditLog.Decision.AUTO_MERGE,
+        created_at__gte=cutoff,
+    ).exclude(from_product_id=models.F('to_product_id')).exists()
 
 
 def _make_unique_slug(name: str, mpn: str) -> str:
@@ -80,7 +108,7 @@ def _features_to_product(
         vendor_code=mpn,
         brand=brand,
         specs_fingerprint=features.specs,
-        key_hash=features.key_hash(),
+        key_hash=features.key_hash,
         url=fallback_url or '',
         image_url=image_url or '',
         is_active=True,
@@ -129,14 +157,14 @@ def _touch_product(product: Product, *, features: Features, name: str, image_url
     if changed_specs:
         product.specs_fingerprint = merged
         updates.append('specs_fingerprint')
-    if features.key_hash() != (product.key_hash or ''):
-        product.key_hash = features.key_hash()
+    if features.key_hash != (product.key_hash or ''):
+        product.key_hash = features.key_hash
         updates.append('key_hash')
 
     product.last_parsed_at = timezone.now()
     updates.extend(['last_parsed_at', 'updated_at'])
     product.save(update_fields=list(dict.fromkeys(updates)))
-    if not product.match_embedding:
+    if product.match_embedding is None:
         sync_product_embedding(product, features, name)
 
 
@@ -184,6 +212,200 @@ def _update_offer(
     offer.save(update_fields=list(dict.fromkeys(changed)))
 
 
+def _resolve_product_for_match(
+    match: MatchResult,
+    *,
+    features: Features,
+    name: str,
+    image_url: str,
+    fallback_url: str,
+    category: Category,
+) -> tuple[Product, bool, str]:
+    if match.decision == 'auto_merge' and match.product is not None:
+        product = match.product
+        _touch_product(product, features=features, name=name, image_url=image_url)
+        rule = match.signals.get('rule', 'auto_merge') if isinstance(match.signals, dict) else 'auto_merge'
+        return product, False, rule
+
+    product, product_created = _features_to_product(
+        features,
+        name=name,
+        image_url=image_url,
+        fallback_url=fallback_url,
+        category=category,
+    )
+    if match.decision == 'review' and match.product is not None:
+        return product, product_created, 'review_pending'
+    return product, product_created, 'new'
+
+
+def _apply_rematch_to_existing_offer(
+    offer: Offer,
+    *,
+    match: MatchResult,
+    features: Features,
+    name: str,
+    image_url: str,
+    category: Category,
+) -> tuple[str, str]:
+    current_product = offer.product
+    match_reason = 'existing_rematched'
+    audit_decision = MergeAuditLog.Decision.UPDATE
+
+    target = match.product
+    if (
+        match.decision == 'auto_merge'
+        and target is not None
+        and target.pk != current_product.pk
+    ):
+        if _is_offer_rematch_cooldown(offer):
+            enqueue_review(
+                offer=offer,
+                suggested=target,
+                score=match.score,
+                signals={**(match.signals or {}), 'rejected': 'cooldown_active'},
+            )
+            write_audit(
+                offer=offer,
+                decision=MergeAuditLog.Decision.REVIEW,
+                actor=MergeAuditLog.Actor.AUTO,
+                score=match.score,
+                signals={
+                    **(match.signals or {}),
+                    'rematch': 'cooldown_skipped',
+                    'suggested_product_id': target.pk,
+                },
+                from_product=current_product,
+                to_product=target,
+            )
+            match_reason = 'existing_cooldown_review'
+            audit_decision = MergeAuditLog.Decision.REVIEW
+        else:
+            offer.product = target
+            offer.save(update_fields=['product', 'updated_at'])
+            _touch_product(target, features=features, name=name, image_url=image_url)
+            write_audit(
+                offer=offer,
+                decision=MergeAuditLog.Decision.AUTO_MERGE,
+                actor=MergeAuditLog.Actor.AUTO,
+                score=match.score,
+                signals={**(match.signals or {}), 'rematch': True},
+                from_product=current_product,
+                to_product=target,
+            )
+            match_reason = match.signals.get('rule', 'auto_merge_rematch')
+            audit_decision = MergeAuditLog.Decision.AUTO_MERGE
+    elif (
+        match.decision == 'review'
+        and target is not None
+        and target.pk != current_product.pk
+    ):
+        enqueue_review(
+            offer=offer,
+            suggested=target,
+            score=match.score,
+            signals=match.signals,
+        )
+        write_audit(
+            offer=offer,
+            decision=MergeAuditLog.Decision.REVIEW,
+            actor=MergeAuditLog.Actor.AUTO,
+            score=match.score,
+            signals={
+                **(match.signals or {}),
+                'rematch': True,
+                'suggested_product_id': target.pk,
+                'kept_product_id': current_product.pk,
+            },
+            from_product=current_product,
+            to_product=current_product,
+        )
+        match_reason = 'existing_review_queued'
+        audit_decision = MergeAuditLog.Decision.REVIEW
+    else:
+        write_audit(
+            offer=offer,
+            decision=_audit_decision_for_match(match.decision),
+            actor=MergeAuditLog.Actor.AUTO,
+            score=match.score,
+            signals={**(match.signals or {}), 'rematch': True, 'product_unchanged': True},
+            from_product=current_product,
+            to_product=current_product,
+        )
+        match_reason = 'existing'
+
+    _touch_product(offer.product, features=features, name=name, image_url=image_url)
+    return match_reason, audit_decision
+
+
+def _finalize_existing_offer(
+    offer: Offer,
+    *,
+    features: Features,
+    name: str,
+    image_url: str,
+    is_available: bool,
+    sku: str,
+    category: Category,
+    idempotent_rule: str,
+) -> OfferUpsertResult:
+    if _rematch_on_update_enabled():
+        match = find_master(features, category_id=category.pk, raw_name=name)
+        _update_offer(
+            offer,
+            name=name,
+            features=features,
+            match=match,
+            image_url=image_url,
+            is_available=is_available,
+            sku=sku,
+        )
+        match_reason, audit_decision = _apply_rematch_to_existing_offer(
+            offer,
+            match=match,
+            features=features,
+            name=name,
+            image_url=image_url,
+            category=category,
+        )
+        return OfferUpsertResult(
+            offer=offer,
+            offer_created=False,
+            product_created=False,
+            match_reason=match_reason,
+            decision=audit_decision,
+            score=match.score,
+        )
+
+    _update_offer(
+        offer,
+        name=name,
+        features=features,
+        match=None,
+        image_url=image_url,
+        is_available=is_available,
+        sku=sku,
+    )
+    _touch_product(offer.product, features=features, name=name, image_url=image_url)
+    write_audit(
+        offer=offer,
+        decision=MergeAuditLog.Decision.UPDATE,
+        actor=MergeAuditLog.Actor.AUTO,
+        score=float(offer.confidence or 0),
+        signals={'rule': idempotent_rule},
+        from_product=offer.product,
+        to_product=offer.product,
+    )
+    return OfferUpsertResult(
+        offer=offer,
+        offer_created=False,
+        product_created=False,
+        match_reason='existing',
+        decision=MergeAuditLog.Decision.UPDATE,
+        score=float(offer.confidence or 0),
+    )
+
+
 @transaction.atomic
 def upsert_offer(
     *,
@@ -208,7 +430,6 @@ def upsert_offer(
         mpn_hint=mpn_hint,
     )
 
-
     offer = (
         Offer.objects
         .filter(source=src, url=canonical_url)
@@ -216,34 +437,16 @@ def upsert_offer(
         .first()
     )
     if offer:
-        _update_offer(
+        return _finalize_existing_offer(
             offer,
-            name=name,
             features=features,
-            match=None,
+            name=name,
             image_url=image_url,
             is_available=is_available,
             sku=vendor_code or '',
+            category=category,
+            idempotent_rule='idempotent_url',
         )
-        _touch_product(offer.product, features=features, name=name, image_url=image_url)
-        write_audit(
-            offer=offer,
-            decision=MergeAuditLog.Decision.UPDATE,
-            actor=MergeAuditLog.Actor.AUTO,
-            score=float(offer.confidence or 0),
-            signals={'rule': 'idempotent_url'},
-            from_product=offer.product,
-            to_product=offer.product,
-        )
-        return OfferUpsertResult(
-            offer=offer,
-            offer_created=False,
-            product_created=False,
-            match_reason='existing',
-            decision=MergeAuditLog.Decision.UPDATE,
-            score=float(offer.confidence or 0),
-        )
-
 
     sku = (vendor_code or '').strip()
     if sku:
@@ -256,53 +459,26 @@ def upsert_offer(
         if offer_by_sku:
             offer_by_sku.url = canonical_url
             offer_by_sku.save(update_fields=['url', 'updated_at'])
-            _update_offer(
+            return _finalize_existing_offer(
                 offer_by_sku,
-                name=name,
                 features=features,
-                match=None,
+                name=name,
                 image_url=image_url,
                 is_available=is_available,
                 sku=sku,
+                category=category,
+                idempotent_rule='idempotent_sku',
             )
-            _touch_product(offer_by_sku.product, features=features, name=name, image_url=image_url)
-            write_audit(
-                offer=offer_by_sku,
-                decision=MergeAuditLog.Decision.UPDATE,
-                actor=MergeAuditLog.Actor.AUTO,
-                score=float(offer_by_sku.confidence or 0),
-                signals={'rule': 'idempotent_sku'},
-                from_product=offer_by_sku.product,
-                to_product=offer_by_sku.product,
-            )
-            return OfferUpsertResult(
-                offer=offer_by_sku,
-                offer_created=False,
-                product_created=False,
-                match_reason='existing',
-                decision=MergeAuditLog.Decision.UPDATE,
-                score=float(offer_by_sku.confidence or 0),
-            )
-
 
     match = find_master(features, category_id=category.pk, raw_name=name)
-    product_created = False
-
-    if match.decision == 'auto_merge' and match.product is not None:
-        product = match.product
-        _touch_product(product, features=features, name=name, image_url=image_url)
-        match_reason = match.signals.get('rule', 'auto_merge') if isinstance(match.signals, dict) else 'auto_merge'
-    elif match.decision == 'review' and match.product is not None:
-        product = match.product
-        product_created = False
-        _touch_product(product, features=features, name=name, image_url=image_url)
-        match_reason = 'review_attach'
-    else:
-        product, product_created = _features_to_product(
-            features, name=name, image_url=image_url,
-            fallback_url=canonical_url, category=category,
-        )
-        match_reason = 'new'
+    product, product_created, match_reason = _resolve_product_for_match(
+        match,
+        features=features,
+        name=name,
+        image_url=image_url,
+        fallback_url=canonical_url,
+        category=category,
+    )
 
     offer = Offer.objects.create(
         product=product,
@@ -330,11 +506,7 @@ def upsert_offer(
 
     write_audit(
         offer=offer,
-        decision={
-            'auto_merge': MergeAuditLog.Decision.AUTO_MERGE,
-            'review': MergeAuditLog.Decision.REVIEW,
-            'new': MergeAuditLog.Decision.NEW,
-        }.get(match.decision, MergeAuditLog.Decision.NEW),
+        decision=_audit_decision_for_match(match.decision),
         actor=MergeAuditLog.Actor.AUTO,
         score=match.score,
         signals=match.signals,
@@ -377,11 +549,7 @@ def shadow_match(
     result = find_master(features, category_id=category.pk, raw_name=name)
     write_audit(
         offer=None,
-        decision={
-            'auto_merge': MergeAuditLog.Decision.AUTO_MERGE,
-            'review': MergeAuditLog.Decision.REVIEW,
-            'new': MergeAuditLog.Decision.NEW,
-        }.get(result.decision, MergeAuditLog.Decision.NEW),
+        decision=_audit_decision_for_match(result.decision),
         actor=MergeAuditLog.Actor.SHADOW,
         score=result.score,
         signals={'shadow': True, 'name': name[:200], 'source': src, **(result.signals or {})},

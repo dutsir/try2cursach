@@ -1,47 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  * {
-    box-sizing: border-box;
+  * { box-sizing: border-box; }
+
+  html, body {
+    font-family: 'Motiva Sans', 'Noto Sans', sans-serif;
+    background-color: #1b2838;
+    color: #c7d5e0;
   }
 
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    scroll-behavior: smooth;
   }
 
-  /* Custom scrollbar */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 9999px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.25);
-  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #16202d; }
+  ::-webkit-scrollbar-thumb { background: #2a3f5a; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a5070; }
 
-  /* Native select styling */
   select option {
-    background-color: #0f172a;
-    color: white;
+    background-color: #1b2838;
+    color: #c7d5e0;
   }
 }
 
-@layer utilities {
-  .glass {
-    @apply border border-white/10 bg-white/5 backdrop-blur-xl;
+@layer components {
+  .steam-panel {
+    @apply bg-steam-card border border-steam-border rounded-steam;
   }
 
-  .glass-hover {
-    @apply glass transition-all duration-300 hover:bg-white/10 hover:border-white/20;
+  .steam-btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-1.5 text-sm font-medium rounded-steam transition-colors duration-100;
+  }
+
+  .steam-btn-primary {
+    background: linear-gradient(to bottom, #67c1f5 5%, #417a9b 95%);
+    color: #ffffff;
+  }
+  .steam-btn-primary:hover {
+    background: linear-gradient(to bottom, #7fcdf7 5%, #4d8aab 95%);
+    color: #ffffff;
+  }
+
+  .steam-btn-green {
+    background: linear-gradient(to bottom, #a4d007 5%, #536904 95%);
+    color: #ffffff;
+  }
+  .steam-btn-green:hover {
+    background: linear-gradient(to bottom, #b9e02e 5%, #618005 95%);
+    color: #ffffff;
+  }
+
+  .steam-btn-ghost {
+    background: rgba(103, 193, 245, 0.1);
+    color: #c7d5e0;
+  }
+  .steam-btn-ghost:hover {
+    background: rgba(103, 193, 245, 0.2);
+    color: #ffffff;
+  }
+
+  .steam-link {
+    @apply text-steam-blue hover:text-white transition-colors duration-100;
   }
 }

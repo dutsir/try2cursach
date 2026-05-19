@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
+from contextlib import contextmanager
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Iterator, Literal
 
 import numpy as np
 from django.conf import settings
@@ -23,9 +25,35 @@ _CYRILLIC_RE = re.compile(r'[а-яё]', re.I)
 
 _EMBEDDING_CACHE: dict[str, list[float]] = {}
 
+_MATCHING_ENABLED_OVERRIDE: bool | None = None
+
 
 def embedding_enabled() -> bool:
     return bool(getattr(settings, 'DEDUP_EMBEDDING_ENABLED', True))
+
+
+def embedding_matching_enabled() -> bool:
+    if _MATCHING_ENABLED_OVERRIDE is not None:
+        return _MATCHING_ENABLED_OVERRIDE
+    if not embedding_enabled():
+        return False
+    return bool(getattr(settings, 'DEDUP_EMBEDDING_MATCH_ENABLED', True))
+
+
+def set_embedding_matching_enabled(enabled: bool | None) -> None:
+    global _MATCHING_ENABLED_OVERRIDE
+    _MATCHING_ENABLED_OVERRIDE = enabled
+
+
+@contextmanager
+def embedding_matching_disabled() -> Iterator[None]:
+    global _MATCHING_ENABLED_OVERRIDE
+    prev = _MATCHING_ENABLED_OVERRIDE
+    _MATCHING_ENABLED_OVERRIDE = False
+    try:
+        yield
+    finally:
+        _MATCHING_ENABLED_OVERRIDE = prev
 
 
 def embedding_model_name() -> str:
@@ -96,11 +124,23 @@ def _load_model() -> Any:
             _MODEL_LOAD_FAILED = True
             return None
 
-    # Fall back to HuggingFace model
+    timeout = int(getattr(settings, 'DEDUP_HF_HUB_TIMEOUT', 120))
+    os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', str(timeout))
+    local_only = bool(getattr(settings, 'DEDUP_EMBEDDING_LOCAL_FILES_ONLY', False))
+
     try:
-        _MODEL = SentenceTransformer(name)
-        logger.info('Embedding-модель загружена (HuggingFace): %s', name)
+        _MODEL = SentenceTransformer(name, local_files_only=local_only)
+        logger.info(
+            'Embedding-модель загружена (HuggingFace): %s (local_files_only=%s)',
+            name, local_only,
+        )
     except Exception:
+        if not local_only:
+            logger.warning(
+                'Не удалось загрузить %s с HuggingFace (timeout=%ss). '
+                'Для rebuild без сети: --no-embedding или скачайте модель заранее.',
+                name, timeout,
+            )
         logger.exception('Не удалось загрузить embedding-модель %s', name)
         _MODEL_LOAD_FAILED = True
         return None
@@ -266,7 +306,10 @@ __all__ = (
     'embedding_cache_stats',
     'embedding_dimensions',
     'embedding_enabled',
+    'embedding_matching_disabled',
+    'embedding_matching_enabled',
     'embedding_for_features',
+    'set_embedding_matching_enabled',
     'embedding_model_name',
     'encode_text',
     'find_embedding_match',
