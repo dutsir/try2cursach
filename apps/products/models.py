@@ -119,6 +119,66 @@ class CategoryListing(BaseModel):
         return f'{self.category.slug} @ {self.get_source_display()}'
 
 
+class ProductFamily(BaseModel):
+    """Семейство товаров — линейка/модель, объединяющая варианты конфигураций.
+
+    Один ноутбук «Lenovo ThinkPad X1 Carbon Gen 11» — это семейство; вариации
+    по RAM/SSD/цвету — отдельные Product со ссылкой на эту семью.
+    """
+
+    name = models.CharField('Название семейства', max_length=512)
+    brand = models.CharField('Бренд', max_length=64, blank=True, default='', db_index=True)
+    model_code = models.CharField(
+        'Модельный код', max_length=128, blank=True, default='',
+        help_text='Канонический код модели без указания поколения (например, "X1 Carbon").',
+    )
+    generation = models.CharField(
+        'Поколение', max_length=64, blank=True, default='',
+        help_text='Поколение/ревизия модели (например, "Gen 11", "M3").',
+    )
+    year = models.PositiveSmallIntegerField('Год', null=True, blank=True)
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE,
+        related_name='families',
+        verbose_name='Категория',
+    )
+    common_specs = models.JSONField(
+        'Общие характеристики', default=dict, blank=True,
+        help_text='Specs, общие для всех вариантов семьи (cpu_family, gpu_family, screen_in и т. п.).',
+    )
+    family_key_hash = models.CharField(
+        'Хэш семейного ключа', max_length=40, blank=True, default='', db_index=True,
+    )
+    match_embedding = VectorField(
+        'Embedding для матчинга семьи',
+        dimensions=EMBEDDING_DIM,
+        null=True, blank=True,
+        help_text='Вектор по «семейному» названию без варьируемых полей.',
+    )
+    is_active = models.BooleanField('Активна', default=True)
+
+    class Meta:
+        verbose_name = 'Семейство товаров'
+        verbose_name_plural = 'Семейства товаров'
+        ordering = ['brand', 'model_code', 'generation']
+        indexes = [
+            models.Index(fields=['brand', 'category']),
+            models.Index(fields=['family_key_hash']),
+            GinIndex(fields=['common_specs'], name='family_common_specs_gin'),
+            HnswIndex(
+                name='family_match_embedding_hnsw',
+                fields=['match_embedding'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_cosine_ops'],
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Product(BaseModel):
 
     name = models.CharField('Название', max_length=512)
@@ -128,6 +188,13 @@ class Product(BaseModel):
         on_delete=models.CASCADE,
         related_name='products',
         verbose_name='Категория',
+    )
+    family = models.ForeignKey(
+        ProductFamily,
+        on_delete=models.SET_NULL,
+        related_name='variants',
+        verbose_name='Семейство',
+        null=True, blank=True,
     )
     vendor_code = models.CharField(
         'Артикул (MPN)', max_length=100, blank=True, default='', db_index=True,
@@ -142,6 +209,15 @@ class Product(BaseModel):
     specs_fingerprint = models.JSONField(
         'Структурированные характеристики',
         default=dict, blank=True,
+    )
+
+    variant_specs = models.JSONField(
+        'Характеристики варианта', default=dict, blank=True,
+        help_text='Specs, отличающие данный вариант внутри семьи (ram_gb, storage_gb, color).',
+    )
+
+    variant_key_hash = models.CharField(
+        'Хэш варианта внутри семьи', max_length=40, blank=True, default='', db_index=True,
     )
 
 
@@ -183,6 +259,7 @@ class Product(BaseModel):
         indexes = [
             models.Index(fields=['brand', 'category']),
             models.Index(fields=['key_hash']),
+            models.Index(fields=['family', 'variant_key_hash']),
             GinIndex(fields=['specs_fingerprint'], name='product_specs_fingerprint_gin'),
 
 

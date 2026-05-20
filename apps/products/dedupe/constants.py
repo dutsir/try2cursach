@@ -140,6 +140,43 @@ COLORS: tuple[str, ...] = (
 )
 
 
+# Ключи specs, по которым внутри одной категории товары считаются ВАРИАНТАМИ
+# одного семейства, а не разными товарами. Всё, чего нет в этом наборе для
+# данной категории, попадает в common_specs (общие для семьи).
+# Slug категории берётся из Category.slug (см. seed_categories.BUILTIN_CATEGORIES).
+VARIANT_SPEC_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
+    # SSD/HDD/серверные накопители: одна модель — разные ёмкости
+    'ssd-nakopiteli': frozenset({'storage_gb'}),
+    'zhestkie-diski-35': frozenset({'storage_gb'}),
+    'servernye-nakopiteli': frozenset({'storage_gb'}),
+    'vneshnie-ssd': frozenset({'storage_gb'}),
+    # Ноутбуки/моноблоки/готовые ПК/микрокомпьютеры: одна линейка модели —
+    # разные конфиги RAM/SSD. CPU/GPU НЕ варианты — это разные SKU сборщика.
+    'noutbuki': frozenset({'ram_gb', 'storage_gb'}),
+    'sobrannyepk': frozenset({'ram_gb', 'storage_gb'}),
+    'monobloki': frozenset({'ram_gb', 'storage_gb'}),
+    'mikrokompyutery': frozenset({'ram_gb', 'storage_gb'}),
+    # Оперативная память: одна линейка (Kingston FURY Beast DDR4 3200) —
+    # разные объёмы и kit-комплекты (1x8, 2x8, 2x16).
+    'operativnaya-pamyat': frozenset({'ram_gb', 'modules_count'}),
+    'servernaya-pamyat': frozenset({'ram_gb', 'modules_count'}),
+    # GPU/мониторы пока не делаем — без точного экстрактора подмодели
+    # получаются мусорные склейки (см. отчёт whatif_families).
+}
+
+
+# Дефолт для категорий без специфичных правил — вариантов нет, каждый Product
+# уникален (процессоры, БП, корпуса, материнки и т. п.).
+VARIANT_SPEC_KEYS_DEFAULT: frozenset[str] = frozenset()
+
+
+def get_variant_keys(category_slug: str) -> frozenset[str]:
+    return VARIANT_SPEC_KEYS_BY_CATEGORY.get(
+        (category_slug or '').strip().lower(),
+        VARIANT_SPEC_KEYS_DEFAULT,
+    )
+
+
 __all__ = (
     'AUTO_MERGE_THRESHOLD',
     'REVIEW_THRESHOLD',
@@ -155,4 +192,7 @@ __all__ = (
     'COLORS',
     'RE_BRACKET_MPN',
     'RE_FREE_MPN',
+    'VARIANT_SPEC_KEYS_BY_CATEGORY',
+    'VARIANT_SPEC_KEYS_DEFAULT',
+    'get_variant_keys',
 )

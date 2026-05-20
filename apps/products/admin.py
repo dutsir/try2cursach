@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Category, CategoryListing, Offer, Product
+from .models import Category, CategoryListing, Offer, Product, ProductFamily
 
 
 class CategoryListingInline(admin.TabularInline):
@@ -63,16 +63,58 @@ class OfferInline(admin.TabularInline):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('name', 'category', 'vendor_code', 'offers_count', 'is_active', 'last_parsed_at')
-    list_filter = ('is_active', 'category')
-    search_fields = ('name', 'vendor_code')
-    raw_id_fields = ('category',)
-    readonly_fields = ('last_parsed_at',)
+    list_display = (
+        'name', 'category', 'family', 'vendor_code',
+        'variant_specs_short', 'offers_count', 'is_active', 'last_parsed_at',
+    )
+    list_filter = ('is_active', 'category', ('family', admin.EmptyFieldListFilter))
+    search_fields = ('name', 'vendor_code', 'family__name')
+    raw_id_fields = ('category', 'family')
+    readonly_fields = ('last_parsed_at', 'variant_key_hash', 'key_hash')
     inlines = (OfferInline,)
 
     @admin.display(description='Офферов', ordering='offers__count')
     def offers_count(self, obj: Product) -> int:
         return obj.offers.count()
+
+    @admin.display(description='Вариант')
+    def variant_specs_short(self, obj: Product) -> str:
+        if not obj.variant_specs:
+            return '—'
+        return ', '.join(f'{k}={v}' for k, v in obj.variant_specs.items())
+
+
+class ProductVariantInline(admin.TabularInline):
+    """Список вариантов под одной семьёй (read-only, только справочно)."""
+
+    model = Product
+    fk_name = 'family'
+    extra = 0
+    fields = ('name', 'vendor_code', 'variant_specs', 'is_active', 'last_parsed_at')
+    readonly_fields = ('name', 'vendor_code', 'variant_specs', 'last_parsed_at')
+    show_change_link = True
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(ProductFamily)
+class ProductFamilyAdmin(admin.ModelAdmin):
+    list_display = (
+        'name', 'brand', 'model_code', 'category',
+        'variants_count', 'is_active', 'created_at',
+    )
+    list_filter = ('is_active', 'category', 'brand')
+    search_fields = ('name', 'brand', 'model_code', 'family_key_hash')
+    raw_id_fields = ('category',)
+    readonly_fields = ('family_key_hash', 'created_at', 'updated_at')
+    inlines = (ProductVariantInline,)
+    ordering = ('-created_at',)
+
+    @admin.display(description='Вариантов', ordering='variants__count')
+    def variants_count(self, obj: ProductFamily) -> int:
+        return obj.variants.count()
 
 
 @admin.register(Offer)

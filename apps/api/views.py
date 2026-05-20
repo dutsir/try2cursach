@@ -10,7 +10,7 @@ from apps.alerts.models import Notification, Subscription, Wishlist, WishlistIte
 from apps.analytics.models import Anomaly
 from apps.core.models import User
 from apps.prices.models import PriceHistory
-from apps.products.models import Category, Offer, Product
+from apps.products.models import Category, Offer, Product, ProductFamily
 
 from .serializers import (
     AnomalySerializer,
@@ -20,6 +20,8 @@ from .serializers import (
     OfferSerializer,
     PriceHistorySerializer,
     ProductDetailSerializer,
+    ProductFamilyListSerializer,
+    ProductFamilySerializer,
     ProductListSerializer,
     SubscriptionSerializer,
     WishlistItemSerializer,
@@ -74,6 +76,46 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         product = self.get_object()
         offers = product.offers.all().order_by('source')
         return Response(OfferSerializer(offers, many=True).data)
+
+
+class ProductFamilyFilterSet(FilterSet):
+    category_slug = CharFilter(method='filter_category_slug')
+
+    def filter_category_slug(self, queryset, name, value):
+        try:
+            cat = Category.objects.get(slug=value, is_active=True)
+            ids = cat.descendants_ids()
+            return queryset.filter(category_id__in=ids).distinct()
+        except Category.DoesNotExist:
+            return queryset.none()
+
+    class Meta:
+        model = ProductFamily
+        fields = ['category', 'brand', 'is_active']
+
+
+class ProductFamilyViewSet(viewsets.ReadOnlyModelViewSet):
+    """Семьи товаров: одна модель — несколько вариантов конфигов (RAM/SSD/...).
+
+    - `/api/families/` — список семей с диапазоном цен и счётчиком вариантов.
+    - `/api/families/<id>/` — детали с полным списком variants и лучшими офферами.
+    """
+
+    queryset = (
+        ProductFamily.objects
+        .filter(is_active=True)
+        .select_related('category')
+        .prefetch_related('variants', 'variants__offers')
+    )
+    permission_classes = [permissions.AllowAny]
+    filterset_class = ProductFamilyFilterSet
+    search_fields = ['name', 'brand', 'model_code']
+    ordering_fields = ['name', 'brand', 'created_at']
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return ProductFamilySerializer
+        return ProductFamilyListSerializer
 
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):

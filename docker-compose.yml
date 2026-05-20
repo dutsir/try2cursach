@@ -2,7 +2,7 @@ version: '3.9'
 
 services:
   postgres:
-    image: timescaledb/timescaledb:latest-pg15
+    image: timescaledb/timescaledb:latest-pg17
     container_name: pm_postgres
     restart: unless-stopped
     environment:

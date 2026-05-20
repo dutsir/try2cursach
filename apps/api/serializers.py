@@ -6,7 +6,7 @@ from apps.alerts.models import Notification, Subscription, Wishlist, WishlistIte
 from apps.analytics.models import Anomaly
 from apps.core.models import User
 from apps.prices.models import PriceHistory
-from apps.products.models import Category, CategoryListing, Offer, Product
+from apps.products.models import Category, CategoryListing, Offer, Product, ProductFamily
 
 
 class CategoryListingSerializer(serializers.ModelSerializer):
@@ -126,9 +126,13 @@ class ProductListSerializer(serializers.ModelSerializer):
 class ProductDetailSerializer(ProductListSerializer):
     offers = serializers.SerializerMethodField()
     price_history = serializers.SerializerMethodField()
+    family = serializers.SerializerMethodField()
+    variant_specs = serializers.JSONField(read_only=True)
 
     class Meta(ProductListSerializer.Meta):
-        fields = ProductListSerializer.Meta.fields + ('offers', 'price_history', 'url')
+        fields = ProductListSerializer.Meta.fields + (
+            'offers', 'price_history', 'url', 'family', 'variant_specs',
+        )
 
     def get_offers(self, obj: Product) -> list[dict]:
         offers = obj.offers.all().order_by('source')
@@ -141,6 +145,78 @@ class ProductDetailSerializer(ProductListSerializer):
             .order_by('-timestamp')[:300]
         )
         return PriceHistorySerializer(recent, many=True).data
+
+    def get_family(self, obj: Product) -> dict | None:
+        f = obj.family
+        if f is None:
+            return None
+        return {'id': f.id, 'name': f.name, 'variants_count': f.variants.count()}
+
+
+class ProductFamilyVariantSerializer(serializers.ModelSerializer):
+    """Мини-сериализатор Product как варианта внутри ProductFamily.
+
+    Для UI «конструктора»: id, ёмкость/конфиг (variant_specs), лучшая цена.
+    """
+
+    best_offer = serializers.SerializerMethodField()
+    variant_specs = serializers.JSONField(read_only=True)
+
+    class Meta:
+        model = Product
+        fields = (
+            'id', 'name', 'slug', 'vendor_code', 'image_url',
+            'variant_specs', 'is_active', 'last_parsed_at', 'best_offer',
+        )
+
+    def get_best_offer(self, obj: Product) -> dict | None:
+        return _best_offer_summary(obj)
+
+
+class ProductFamilySerializer(serializers.ModelSerializer):
+    category = CategoryMinimalSerializer(read_only=True)
+    variants = ProductFamilyVariantSerializer(many=True, read_only=True)
+    variants_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductFamily
+        fields = (
+            'id', 'name', 'brand', 'model_code', 'generation', 'year',
+            'category', 'common_specs', 'is_active', 'created_at',
+            'variants_count', 'variants',
+        )
+
+    def get_variants_count(self, obj: ProductFamily) -> int:
+        return obj.variants.count()
+
+
+class ProductFamilyListSerializer(serializers.ModelSerializer):
+    """Список семей без раскрытых variants — для эффективного листинга."""
+
+    category = CategoryMinimalSerializer(read_only=True)
+    variants_count = serializers.SerializerMethodField()
+    price_range = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductFamily
+        fields = (
+            'id', 'name', 'brand', 'model_code', 'category',
+            'variants_count', 'price_range', 'is_active', 'created_at',
+        )
+
+    def get_variants_count(self, obj: ProductFamily) -> int:
+        return obj.variants.count()
+
+    def get_price_range(self, obj: ProductFamily) -> dict | None:
+        """min/max актуальной цены среди вариантов семьи."""
+        prices = list(
+            PriceHistory.objects
+            .filter(product__family=obj, is_actual=True)
+            .values_list('price', flat=True)
+        )
+        if not prices:
+            return None
+        return {'min': str(min(prices)), 'max': str(max(prices))}
 
 
 class SubscriptionSerializer(serializers.ModelSerializer):

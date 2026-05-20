@@ -13,6 +13,7 @@ from django.utils.text import slugify
 from ..models import Category, MergeAuditLog, Offer, Product
 from .audit import enqueue_review, write_audit
 from .embedding import pick_display_name, sync_product_embedding
+from .family_service import attach_product_to_family
 from .features import Features
 from .matcher import MatchResult, find_master
 from .normalizer import normalize_offer, normalize_offer_url
@@ -478,6 +479,15 @@ def upsert_offer(
         image_url=image_url,
         fallback_url=canonical_url,
         category=category,
+    )
+
+    attach_product_to_family(
+        product,
+        category_slug=category.slug,
+        name=name,
+        brand=features.brand,
+        vendor_code=features.model_code,
+        specs=features.specs,
     )
 
     offer = Offer.objects.create(

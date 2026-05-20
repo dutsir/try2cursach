@@ -13,6 +13,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
+from .dedupe.family_service import attach_product_to_family
 from .models import Category, Offer, Product
 
 logger = logging.getLogger(__name__)
@@ -380,6 +381,12 @@ def _legacy_upsert_offer(
         fallback_url=canonical_url,
     )
 
+    attach_product_to_family(
+        match.product,
+        category_slug=category.slug,
+        name=name,
+        vendor_code=vendor_code,
+    )
 
     try:
         with transaction.atomic():
