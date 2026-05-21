@@ -140,14 +140,28 @@ if [ -f "$PROJECT_DIR/venv/bin/python" ]; then
     fi
 fi
 
-# --- 8. Chrome ---
-section "8. Chrome (для парсинга)"
+# --- 8. Chrome + Xvfb (для парсинга) ---
+section "8. Chrome + Xvfb"
 if command -v google-chrome &>/dev/null || command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null; then
     BROWSER=$(command -v google-chrome chromium-browser chromium 2>/dev/null | head -1)
-    ok "Браузер: $BROWSER"
+    BROWSER_VER=$("$BROWSER" --version 2>/dev/null | awk '{print $NF}')
+    ok "Браузер: $BROWSER ($BROWSER_VER)"
 else
     warn "Chrome/Chromium не установлен (нужен для Selenium-парсеров)"
     info "Установка: sudo apt install chromium-browser"
+    info "Или Google Chrome (рекомендую): https://www.google.com/chrome/"
+fi
+
+if command -v Xvfb &>/dev/null; then
+    ok "Xvfb установлен"
+    if pgrep -f "Xvfb :99" >/dev/null; then
+        ok "Xvfb работает на :99"
+    else
+        info "Xvfb не запущен (запустится автоматически через run_celery_worker.sh)"
+    fi
+else
+    warn "Xvfb не установлен (нужен для невидимого парсинга)"
+    info "Установка: sudo apt install xvfb"
 fi
 
 # --- Итог ---
