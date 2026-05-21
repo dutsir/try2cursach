@@ -9,7 +9,6 @@ from django.utils import timezone
 
 from apps.prices.models import PriceHistory
 from apps.products.models import Product
-from .models import PriceForecast
 
 
 @dataclass
@@ -24,8 +23,6 @@ class ProductSummary:
     avg_price_30d: float | None
     change_30d_pct: float | None
     records_count: int
-    forecast_7d: Decimal | None
-    forecast_direction: str
 
 
 def compare(product_ids: list[int], days: int = 30) -> list[ProductSummary]:
@@ -72,23 +69,6 @@ def compare(product_ids: list[int], days: int = 30) -> list[ProductSummary]:
             if first_p > 0:
                 change_pct = round((last_p - first_p) / first_p * 100, 1)
 
-        forecast_obj = (
-            PriceForecast.objects
-            .filter(product=product, method='ARIMA')
-            .order_by('forecast_date')
-            .first()
-        )
-        forecast_price = forecast_obj.predicted_price if forecast_obj else None
-
-        direction = ''
-        if forecast_price and current:
-            if forecast_price > current:
-                direction = 'рост'
-            elif forecast_price < current:
-                direction = 'снижение'
-            else:
-                direction = 'стабильно'
-
         results.append(ProductSummary(
             product_id=product.pk,
             name=product.name,
@@ -100,8 +80,6 @@ def compare(product_ids: list[int], days: int = 30) -> list[ProductSummary]:
             avg_price_30d=round(float(stats['avg_p']), 2) if stats['avg_p'] else None,
             change_30d_pct=change_pct,
             records_count=len(records),
-            forecast_7d=forecast_price,
-            forecast_direction=direction,
         ))
 
     return results

@@ -260,9 +260,6 @@ OZON_USER_DATA_DIR = os.getenv(
 )
 
 
-ENABLE_ADVANCED_ANALYTICS = os.getenv('ENABLE_ADVANCED_ANALYTICS', '0') == '1'
-
-
 DEDUP_V2 = os.getenv('DEDUP_V2', '1') == '1'
 
 
@@ -320,11 +317,6 @@ LOGGING = {
     },
     'loggers': {
         'apps.prices.parsers': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        'apps.analytics.detector': {
             'handlers': ['console'],
             'level': 'DEBUG',
             'propagate': False,

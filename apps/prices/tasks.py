@@ -365,22 +365,6 @@ def task_save_price(
 
     logger.info('Сохранена цена для %s: %s₽', product.name, price_decimal)
 
-    if getattr(settings, 'ENABLE_ADVANCED_ANALYTICS', False):
-        from apps.analytics.tasks import task_detect_anomalies
-
-
-        if getattr(self.request, 'called_directly', False) or getattr(self.request, 'is_eager', False):
-            task_detect_anomalies(product_id=product.pk)
-        else:
-            try:
-                task_detect_anomalies.delay(product_id=product.pk)
-            except OperationalError:
-                logger.warning(
-                    'Брокер Celery недоступен, запускаем детекцию аномалий синхронно для product_id=%s',
-                    product.pk,
-                )
-                task_detect_anomalies(product_id=product.pk)
-
     return {
         'status': 'saved',
         'product_id': product.pk,

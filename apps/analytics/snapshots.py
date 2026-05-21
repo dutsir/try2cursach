@@ -5,10 +5,9 @@ from dataclasses import asdict
 from decimal import Decimal
 from typing import Any
 
-from django.db.models import Count
 from django.utils import timezone
 
-from apps.analytics.models import AnalyticsSnapshot, Anomaly, CurrencyRate
+from apps.analytics.models import AnalyticsSnapshot
 
 
 def _json_safe(obj: Any) -> Any:
@@ -33,12 +32,10 @@ def build_full_dashboard_payload(
     heatmap_days: int = 7,
     heatmap_max_products: int = 30,
     deals_limit: int = 50,
-    sensitivity_limit: int = 30,
     n_clusters: int = 4,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     from apps.analytics.best_deals import find_best_deals
     from apps.analytics.clustering import ProductFeatures, cluster_products
-    from apps.analytics.currency_sensitivity import analyze_category_sensitivity
     from apps.analytics.heatmap import build_heatmap
     from apps.analytics.parsing_metrics import compute_parsing_metrics
     from apps.analytics.price_index import compute_category_index
@@ -52,27 +49,6 @@ def build_full_dashboard_payload(
     dates, heat_rows = build_heatmap(
         category_slug=None, days=heatmap_days, max_products=heatmap_max_products,
     )
-    sens = analyze_category_sensitivity(
-        category_slug=None, currency_code='USD', limit=sensitivity_limit,
-    )
-
-    since = timezone.now() - _dt.timedelta(days=period_days)
-    an_qs = Anomaly.objects.filter(detected_at__gte=since)
-    anomaly_total = an_qs.count()
-    by_severity = dict(
-        an_qs.values('severity').annotate(c=Count('id')).values_list('severity', 'c')
-    )
-    by_type = dict(
-        an_qs.values('anomaly_type').annotate(c=Count('id')).values_list('anomaly_type', 'c')
-    )
-
-    latest_rates = list(
-        CurrencyRate.objects.order_by('-date', 'currency_code')[:9]
-    )
-    rates_summary = [
-        {'currency': r.currency_code, 'rate': float(r.rate), 'date': r.date.isoformat()}
-        for r in latest_rates
-    ]
 
     summary = {
         'metrics_days': metrics_days,
@@ -82,15 +58,11 @@ def build_full_dashboard_payload(
         'total_active_products': metrics.total_products,
         'categories_count': metrics.active_categories,
         'products_without_prices': metrics.products_without_data,
-        'anomalies_in_period': anomaly_total,
-        'anomalies_by_severity': by_severity,
-        'anomalies_by_type': by_type,
         'category_index_rows': len(indices),
         'deals_listed': len(deals),
         'cluster_labels': {k: len(v) for k, v in clusters.items()},
         'heatmap_products': len(heat_rows),
         'heatmap_dates': len(dates),
-        'sensitivity_rows': len(sens),
     }
 
     def feat_to_dict(f: ProductFeatures) -> dict[str, Any]:
@@ -135,25 +107,6 @@ def build_full_dashboard_payload(
                 for r in heat_rows
             ],
         },
-        'sensitivity_usd': [
-            {
-                'product_id': r.product_id,
-                'product_name': r.product_name,
-                'correlation': r.correlation,
-                'p_value': r.p_value,
-                'sample_size': r.sample_size,
-                'conclusion': r.conclusion,
-                'detail': r.detail,
-            }
-            for r in sens
-        ],
-        'anomalies_summary': {
-            'period_days': period_days,
-            'total': anomaly_total,
-            'by_severity': by_severity,
-            'by_type': by_type,
-        },
-        'currency_rates_latest': rates_summary,
     }
 
     return summary, payload
@@ -211,7 +164,10 @@ def save_kind_snapshot(
 
         days = int(parameters.get('days', 7))
         s = compute_parsing_metrics(days=days)
-        summary = {'total_price_records': s.total_price_records, 'unique_products': s.unique_products_updated}
+        summary = {
+            'total_price_records': s.total_price_records,
+            'unique_products': s.unique_products_updated,
+        }
         payload = _json_safe(asdict(s))
     elif kind == AnalyticsSnapshot.Kind.DEALS_TOP:
         from apps.analytics.best_deals import find_best_deals
@@ -223,17 +179,8 @@ def save_kind_snapshot(
         )
         summary = {'count': len(deals)}
         payload = [_json_safe(asdict(d)) for d in deals]
-    elif kind == AnalyticsSnapshot.Kind.ANOMALIES_SUMMARY:
-        days = int(parameters.get('days', 7))
-        since = timezone.now() - _dt.timedelta(days=days)
-        qs = Anomaly.objects.filter(detected_at__gte=since)
-        total = qs.count()
-        by_severity = dict(qs.values('severity').annotate(c=Count('id')).values_list('severity', 'c'))
-        by_type = dict(qs.values('anomaly_type').annotate(c=Count('id')).values_list('anomaly_type', 'c'))
-        summary = {'total': total, 'days': days}
-        payload = {'by_severity': by_severity, 'by_type': by_type, 'days': days}
     else:
-        raise ValueError(f'Неизвестный kind: {kind}')
+        raise ValueError(f'Неизвестный или отключённый kind: {kind}')
 
     return AnalyticsSnapshot.objects.create(
         kind=kind,

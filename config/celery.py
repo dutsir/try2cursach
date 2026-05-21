@@ -16,8 +16,6 @@ try:
         app.conf.worker_pool = 'solo'
     app.autodiscover_tasks()
 
-    _enable_analytics = os.getenv('ENABLE_ADVANCED_ANALYTICS', '0') == '1'
-
     app.conf.beat_schedule = {
         'parse-all-categories-every-6h': {
             'task': 'apps.prices.tasks.task_parse_all_categories',
@@ -36,12 +34,6 @@ try:
             'schedule': crontab(minute=0, hour=4, day_of_week=0),
         },
     }
-
-    if _enable_analytics:
-        app.conf.beat_schedule['detect-anomalies-daily'] = {
-            'task': 'apps.analytics.tasks.task_detect_all_anomalies',
-            'schedule': crontab(minute=0, hour=3),
-        }
 except ImportError:
     Celery = None
     crontab = None

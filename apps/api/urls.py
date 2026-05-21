@@ -10,7 +10,6 @@ router.register('categories', views.CategoryViewSet, basename='category')
 router.register('offers', views.OfferViewSet, basename='offer')
 router.register('subscriptions', views.SubscriptionViewSet, basename='subscription')
 router.register('notifications', views.NotificationViewSet, basename='notification')
-router.register('anomalies', views.AnomalyViewSet, basename='anomaly')
 router.register('wishlist', views.WishlistViewSet, basename='wishlist')
 
 urlpatterns = [

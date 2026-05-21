@@ -3,7 +3,6 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.alerts.models import Notification, Subscription, Wishlist, WishlistItem
-from apps.analytics.models import Anomaly
 from apps.core.models import User
 from apps.prices.models import PriceHistory
 from apps.products.models import Category, CategoryListing, Offer, Product, ProductFamily
@@ -242,17 +241,6 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ('id', 'message', 'sent_at')
-
-
-class AnomalySerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
-
-    class Meta:
-        model = Anomaly
-        fields = (
-            'id', 'product', 'product_name', 'anomaly_type',
-            'severity', 'description', 'detected_at', 'resolved',
-        )
 
 
 class WishlistItemSerializer(serializers.ModelSerializer):

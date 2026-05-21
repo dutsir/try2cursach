@@ -7,13 +7,11 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from apps.alerts.models import Notification, Subscription, Wishlist, WishlistItem
-from apps.analytics.models import Anomaly
 from apps.core.models import User
 from apps.prices.models import PriceHistory
 from apps.products.models import Category, Offer, Product, ProductFamily
 
 from .serializers import (
-    AnomalySerializer,
     CategoryMinimalSerializer,
     CategorySerializer,
     NotificationSerializer,
@@ -168,14 +166,6 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return Notification.objects.filter(user=self.request.user)
-
-
-class AnomalyViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Anomaly.objects.select_related('product').all()
-    serializer_class = AnomalySerializer
-    permission_classes = [permissions.AllowAny]
-    filterset_fields = ['severity', 'anomaly_type', 'resolved', 'product']
-    ordering_fields = ['detected_at', 'severity']
 
 
 class WishlistViewSet(viewsets.ViewSet):
