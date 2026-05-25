@@ -26,8 +26,10 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
+    'http://localhost',
     'http://localhost:5173',
     'http://localhost:8000',
+    'http://127.0.0.1',
     'http://127.0.0.1:5173',
     'http://127.0.0.1:8000',
 ]
@@ -217,6 +219,11 @@ DNS_SELENIUM_HTTP_TIMEOUT = int(os.getenv('DNS_SELENIUM_HTTP_TIMEOUT', '300'))
 DNS_SYNC_CATEGORY_COOLDOWN_MIN = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MIN', '45'))
 DNS_SYNC_CATEGORY_COOLDOWN_MAX = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MAX', '120'))
 
+DNS_USER_DATA_DIR = os.getenv(
+    'DNS_USER_DATA_DIR',
+    str(BASE_DIR / 'var' / 'chrome_profiles' / 'dns'),
+)
+
 
 CITILINK_CATALOG_ELEMENT_WAIT = int(os.getenv('CITILINK_CATALOG_ELEMENT_WAIT', '45'))
 CITILINK_PAGE_LOAD_TIMEOUT = int(os.getenv('CITILINK_PAGE_LOAD_TIMEOUT', '120'))
@@ -235,6 +242,40 @@ CITILINK_USER_DATA_DIR = os.getenv(
     'CITILINK_USER_DATA_DIR',
     str(BASE_DIR / 'var' / 'chrome_profiles' / 'citilink'),
 )
+
+
+# === Wildberries парсер ===
+# В отличие от DNS/Citilink (Selenium), WB парсер использует публичные HTTP API.
+# Это в 10-20 раз быстрее, не требует Chrome и почти не блокируется.
+
+# Регион доставки (влияет на цену!). -1257786 = Москва (по умолчанию).
+# Другие dest: -337422 = СПб, -123585 = Екатеринбург, и т.д.
+WB_DEST_ID = int(os.getenv('WB_DEST_ID', '-1257786'))
+WB_DEST_NAME = os.getenv('WB_DEST_NAME', 'Москва')
+
+# Максимальное количество страниц на категорию (WB разрешает до 100).
+# 30 страниц × 100 товаров/стр = 3000 топовых товаров на категорию.
+WB_MAX_PAGES = int(os.getenv('WB_MAX_PAGES', '30'))
+
+# Throttling — не более N запросов в секунду (защита от 429).
+# 1.0 безопаснее для WB (мы наблюдали 429 при 2.0+ rps).
+WB_RATE_LIMIT_RPS = float(os.getenv('WB_RATE_LIMIT_RPS', '1.0'))
+
+# Таймауты и ретраи для HTTP запросов
+WB_REQUEST_TIMEOUT = int(os.getenv('WB_REQUEST_TIMEOUT', '15'))
+WB_MAX_RETRIES = int(os.getenv('WB_MAX_RETRIES', '3'))
+
+# Сортировка товаров в каталоге: popular | priceup | pricedown | rate | newly
+WB_SORT_ORDER = os.getenv('WB_SORT_ORDER', 'popular')
+
+# Прокси — если WB_PROXY_LIST пустой, используется общий PROXY_LIST.
+WB_PROXY_LIST = (
+    [p.strip() for p in os.getenv('WB_PROXY_LIST', '').split(',') if p.strip()]
+    or PROXY_LIST
+)
+
+# Кеш для дерева категорий (на сколько секунд)
+WB_CATEGORIES_CACHE_TTL = int(os.getenv('WB_CATEGORIES_CACHE_TTL', '86400'))  # 24 часа
 
 
 OZON_PAGE_LOAD_TIMEOUT = int(os.getenv('OZON_PAGE_LOAD_TIMEOUT', '120'))

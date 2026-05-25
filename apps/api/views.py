@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from apps.alerts.models import Notification, Subscription, Wishlist, WishlistItem
 from apps.core.models import User
 from apps.prices.models import PriceHistory
+from apps.prices.stats import compute_product_price_stats
 from apps.products.models import Category, Offer, Product, ProductFamily
 
 from .serializers import (
@@ -74,6 +75,76 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         product = self.get_object()
         offers = product.offers.all().order_by('source')
         return Response(OfferSerializer(offers, many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='price-stats')
+    def price_stats(self, request: Request, pk: int | None = None) -> Response:
+        """Возвращает агрегаты PriceStats: за всё время, 30д, 7д.
+
+        current_price берётся как минимальная цена среди доступных офферов
+        (зеркало логики в шаблоне catalog/product.html).
+        """
+        product = self.get_object()
+
+        # current_price: best price среди ПОСЛЕДНИХ актуальных записей по каждому
+        # офферу. Цена хранится в PriceHistory, а не в Offer.
+        offers = list(product.offers.all())
+        offer_prices: list[tuple[int, bool]] = []  # (price, is_available)
+        for offer in offers:
+            last = (
+                PriceHistory.objects
+                .filter(offer=offer, is_actual=True)
+                .only('price')
+                .order_by('-timestamp')
+                .first()
+            )
+            if last and last.price and last.price > 0:
+                offer_prices.append((int(last.price), bool(offer.is_available)))
+
+        available = [p for p, av in offer_prices if av]
+        if available:
+            current_price: int | None = min(available)
+        else:
+            any_prices = [p for p, _ in offer_prices]
+            current_price = min(any_prices) if any_prices else None
+
+        stats = compute_product_price_stats(product, current_price=current_price)
+
+        def _iso(d):
+            return d.isoformat() if d else None
+
+        payload = {
+            'current': stats.current,
+            'history_points': stats.history_points,
+            'all_time': {
+                'min': stats.min_price,
+                'min_date': _iso(stats.min_date),
+                'max': stats.max_price,
+                'max_date': _iso(stats.max_date),
+            },
+            'window_30d': {
+                'min': stats.min_price_30d,
+                'min_date': _iso(stats.min_date_30d),
+                'max': stats.max_price_30d,
+                'max_date': _iso(stats.max_date_30d),
+                'avg': stats.avg_30d,
+                'points': stats.points_30d,
+            },
+            'window_7d': {
+                'min': stats.min_price_7d,
+                'min_date': _iso(stats.min_date_7d),
+                'max': stats.max_price_7d,
+                'max_date': _iso(stats.max_date_7d),
+                'avg': stats.avg_7d,
+                'points': stats.points_7d,
+            },
+            'delta_7d_pct': stats.delta_7d_pct,
+            'delta_30d_pct': stats.delta_30d_pct,
+            'is_min_30d': stats.is_min_30d,
+            'is_min_all_time': stats.is_min_all_time,
+            'drop_alert': stats.drop_alert,
+            'drop_alert_pct': stats.drop_alert_pct,
+        }
+        return Response(payload)
 
 
 class ProductFamilyFilterSet(FilterSet):

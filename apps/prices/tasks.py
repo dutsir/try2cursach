@@ -11,6 +11,7 @@ from kombu.exceptions import OperationalError
 
 from apps.products.models import Category, CategoryListing, Offer, Product
 from apps.products.services import upsert_offer
+from apps.products.dedupe.memory_optimizer import dedup_batcher
 
 from .models import ParseRun, PriceHistory
 
@@ -30,35 +31,80 @@ def _persist_parsed_batch(
     new_products = 0
     saved_prices = 0
 
-    for item in parsed_products:
-        res = upsert_offer(
-            category=category,
-            source=source,
-            name=item.name,
-            url=item.url,
-            vendor_code=item.vendor_code,
-            image_url=item.image_url,
-            is_available=getattr(item, 'is_available', True),
-        )
-        saved += 1
-        if res.offer_created:
-            new_offers += 1
-        if res.product_created:
-            new_products += 1
+    # Для больших категорий используем батчинг, чтобы избежать OOM
+    # при дедупликации (особенно важно для мониторов, материнок и т.д.)
+    use_batching = len(parsed_products) > 100
 
-        price_kwargs = dict(
-            offer_id=res.offer.pk,
-            price=item.price,
-            old_price=item.old_price,
-            timestamp=timezone.now().isoformat(),
-            source=source,
+    if use_batching:
+        logger.info(
+            'Обработка %d товаров батчами для категории %s (памяти оптимизированная обработка)',
+            len(parsed_products), category.slug,
         )
-        if sync:
-            result = task_save_price(**price_kwargs)
-            if isinstance(result, dict) and result.get('status') == 'saved':
-                saved_prices += 1
-        else:
-            task_save_price.delay(**price_kwargs)
+
+        # Подготавливаем данные для батчера
+        offers_data = []
+        for item in parsed_products:
+            offers_data.append({
+                'category': category,
+                'source': source,
+                'name': item.name,
+                'url': item.url,
+                'vendor_code': item.vendor_code,
+                'image_url': item.image_url,
+                'is_available': getattr(item, 'is_available', True),
+            })
+
+        # Обрабатываем батчами
+        batch_stats = dedup_batcher.process_offers_in_batches(
+            offers_data,
+            upsert_offer,
+        )
+        saved = batch_stats['saved']
+        new_offers = batch_stats['new_offers']
+        new_products = batch_stats['new_products']
+    else:
+        # Для маленьких категорий обычная обработка
+        for item in parsed_products:
+            res = upsert_offer(
+                category=category,
+                source=source,
+                name=item.name,
+                url=item.url,
+                vendor_code=item.vendor_code,
+                image_url=item.image_url,
+                is_available=getattr(item, 'is_available', True),
+            )
+            saved += 1
+            if res.offer_created:
+                new_offers += 1
+            if res.product_created:
+                new_products += 1
+
+    # Сохранение цен (после дедупликации)
+    # Повторно обработаем товары для сохранения цен
+    for item in parsed_products:
+        try:
+            offer = Offer.objects.filter(
+                source=source,
+                raw_name=item.name,
+            ).select_related('product').first()
+
+            if offer:
+                price_kwargs = dict(
+                    offer_id=offer.pk,
+                    price=item.price,
+                    old_price=item.old_price,
+                    timestamp=timezone.now().isoformat(),
+                    source=source,
+                )
+                if sync:
+                    result = task_save_price(**price_kwargs)
+                    if isinstance(result, dict) and result.get('status') == 'saved':
+                        saved_prices += 1
+                else:
+                    task_save_price.delay(**price_kwargs)
+        except Exception as exc:
+            logger.debug('Ошибка при сохранении цены для %s: %s', item.name, exc)
 
     metrics = {
         'saved': saved,

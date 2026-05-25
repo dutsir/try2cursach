@@ -13,7 +13,10 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # ВАЖНО: образ timescale/timescaledb-ha хранит данные в /home/postgres/pgdata/data
+      # а не в стандартном /var/lib/postgresql/data!
+      # Если смонтировать неправильно, данные пропадут при пересоздании контейнера.
+      - postgres_data:/home/postgres/pgdata/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-pm_user} -d ${DB_NAME:-price_monitor}"]
       interval: 5s
@@ -69,6 +72,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+        reservations:
+          memory: 1G
     command: >
       sh -c "python manage.py migrate &&
              python manage.py seed_categories --update &&
@@ -90,6 +99,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1.5G
 
   celery-beat:
     build:
@@ -108,10 +123,22 @@ services:
       redis:
         condition: service_healthy
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pm_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - web
+    environment:
+      # Если фронт нужно проксировать запросы на бэк, раскомментировать в nginx.conf
+      BACKEND_URL: http://web:8000
+
 volumes:
   postgres_data:
   rabbitmq_data:
   redis_data:
   static_volume:
-
-  #пока робим без докера тко не получается нормально запустить, нужно будет потом доделать

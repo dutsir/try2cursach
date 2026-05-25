@@ -10,6 +10,7 @@ class PriceHistory(BaseModel):
         DNS = 'dns', 'DNS'
         OZON = 'ozon', 'Ozon'
         CITILINK = 'citilink', 'Ситилинк'
+        WB = 'wb', 'Wildberries'
 
     product = models.ForeignKey(
         Product,
@@ -56,6 +57,7 @@ class ParseRun(BaseModel):
         DNS = 'dns', 'DNS'
         OZON = 'ozon', 'Ozon'
         CITILINK = 'citilink', 'Ситилинк'
+        WB = 'wb', 'Wildberries'
 
     class Status(models.TextChoices):
         RUNNING = 'running', 'Идёт'

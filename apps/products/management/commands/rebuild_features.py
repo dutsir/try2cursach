@@ -67,12 +67,17 @@ class Command(BaseCommand):
             scanned += 1
 
             name = (offer.raw_name or '').strip() or (offer.product.name if offer.product_id else '')
+            # Резолвим category_slug для family-экстрактора
+            cat_slug = ''
+            if offer.product_id and offer.product.category_id:
+                cat_slug = offer.product.category.slug if offer.product.category else ''
             features = normalize_offer(
                 name=name,
                 source=offer.source,
                 category_id=offer.product.category_id if offer.product_id else None,
                 sku=offer.source_sku or offer.vendor_code or '',
                 url=offer.url,
+                category_slug=cat_slug,
             )
             if features.model_code:
                 with_mpn += 1
@@ -124,12 +129,20 @@ class Command(BaseCommand):
         embeddings_synced = 0
         for p in qs.iterator(chunk_size=500):
             scanned += 1
+            # Резолвим slug для family-экстрактора
+            cat_slug = ''
+            if p.category_id:
+                try:
+                    cat_slug = p.category.slug
+                except Exception:
+                    pass
             features = normalize_offer(
                 name=p.name,
                 source='',
                 category_id=p.category_id,
                 sku='',
                 url='',
+                category_slug=cat_slug,
             )
             updates: list[str] = []
             if features.brand and not (p.brand or '').strip():

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { ArrowLeft, ExternalLink, Package, ShoppingCart, BookmarkPlus } from 'lucide-react'
 import { PriceChart } from '@/components/PriceChart'
+import { PriceWindowStats } from '@/components/PriceWindowStats'
 import { AddSubscriptionModal } from '@/components/AddSubscriptionModal'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -11,16 +12,24 @@ import { Card } from '@/components/ui/Card'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { productsApi } from '@/api/products'
 import { subscriptionsApi } from '@/api/subscriptions'
-import { formatPrice, formatRelativeDate, SOURCE_LABELS, SOURCE_COLORS, discount } from '@/lib/utils'
+import { formatPrice, formatRelativeDate, SOURCE_LABELS, SOURCE_COLORS, discount, cn } from '@/lib/utils'
+import type { PriceWindow } from '@/types'
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>()
   const productId = Number(id)
   const [subscribeOpen, setSubscribeOpen] = useState(false)
+  const [priceWindow, setPriceWindow] = useState<PriceWindow>('30d')
 
   const { data: product, isLoading } = useQuery({
     queryKey: ['product', productId],
     queryFn: () => productsApi.detail(productId),
+    enabled: !!productId,
+  })
+
+  const { data: priceStats } = useQuery({
+    queryKey: ['price-stats', productId],
+    queryFn: () => productsApi.priceStats(productId),
     enabled: !!productId,
   })
 
@@ -93,11 +102,16 @@ export default function ProductDetail() {
 
                   {bestOffer && (
                     <div className="mt-auto flex flex-wrap items-center gap-3">
-                      <span className="text-3xl font-bold text-white">{formatPrice(bestOffer.price)}</span>
+                      <span className="text-3xl font-bold text-white">{formatPrice(bestOffer.current_price ?? bestOffer.price)}</span>
                       {bestOffer.old_price && (
                         <>
                           <span className="text-lg text-white/40 line-through">{formatPrice(bestOffer.old_price)}</span>
-                          <Badge variant="success">-{discount(bestOffer.price, bestOffer.old_price)}%</Badge>
+                          {bestOffer.price && bestOffer.old_price && (
+                            <Badge variant="success">-{discount(
+                              typeof bestOffer.price === 'string' ? parseFloat(bestOffer.price) : bestOffer.price,
+                              typeof bestOffer.old_price === 'string' ? parseFloat(bestOffer.old_price) : bestOffer.old_price
+                            )}%</Badge>
+                          )}
                         </>
                       )}
                     </div>
@@ -110,13 +124,60 @@ export default function ProductDetail() {
           {/* Price chart */}
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
             <Card className="p-6">
-              <h2 className="mb-4 text-lg font-semibold text-white">История цен</h2>
-              <PriceChart productId={productId} targetPrice={subscription?.target_price} />
-              {subscription && (
-                <p className="mt-2 text-xs text-white/40">
-                  Зелёная линия — ваша целевая цена {formatPrice(subscription.target_price)}
-                </p>
-              )}
+              <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+                <h2 className="text-lg font-semibold text-white">История цен</h2>
+                {/* Переключатель окна */}
+                <div className="inline-flex rounded-xl border border-white/10 bg-white/5 p-1">
+                  {(['7d', '30d', 'all'] as PriceWindow[]).map(w => (
+                    <button
+                      key={w}
+                      onClick={() => setPriceWindow(w)}
+                      className={cn(
+                        'rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                        priceWindow === w
+                          ? 'bg-brand-600 text-white'
+                          : 'text-white/60 hover:text-white',
+                      )}
+                    >
+                      {w === '7d' ? '7 дней' : w === '30d' ? '30 дней' : 'Всё время'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <PriceChart
+                productId={productId}
+                targetPrice={subscription?.target_price}
+                window={priceWindow}
+                stats={priceStats}
+              />
+
+              {/* Карточки метрик + bar-chart дневных средних */}
+              <div className="mt-6">
+                <PriceWindowStats
+                  productId={productId}
+                  stats={priceStats}
+                  window={priceWindow}
+                />
+              </div>
+
+              {/* Подсказки про линии */}
+              <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-0.5 w-4 bg-violet-400" /> средняя
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" /> минимум
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" /> максимум
+                </span>
+                {subscription && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-0.5 w-4 bg-emerald-500" /> цель {formatPrice(subscription.target_price)}
+                  </span>
+                )}
+              </div>
             </Card>
           </motion.div>
 
@@ -143,7 +204,7 @@ export default function ProductDetail() {
                       )}
 
                       <div className="text-right">
-                        <p className="font-semibold text-white">{formatPrice(offer.price)}</p>
+                        <p className="font-semibold text-white">{offer.current_price ? formatPrice(offer.current_price) : 'не число ₽'}</p>
                         {offer.old_price && (
                           <p className="text-xs text-white/40 line-through">{formatPrice(offer.old_price)}</p>
                         )}

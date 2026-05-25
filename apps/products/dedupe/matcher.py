@@ -21,12 +21,29 @@ from .constants import (
     NAME_DICE_WEIGHT,
     REVIEW_THRESHOLD,
     SOFT_CONFLICT_PENALTY,
+    VARIANT_SPEC_KEYS_BY_CATEGORY,
     WEAK_SOURCES,
     WEIGHTS,
 )
 from .features import Features
 from .normalizer import dice as dice_score
 from .normalizer import specs_contradict
+
+
+# Variant-поля которые могут различаться между Products в одной family.
+# Полный список используется когда категория неизвестна.
+ALL_VARIANT_KEYS: frozenset[str] = frozenset({
+    'ram_gb', 'storage_gb', 'screen_in', 'modules_count',
+})
+
+
+def _get_variant_keys_for_category(category_slug: str | None) -> frozenset[str]:
+    """Возвращает variant-поля для категории (или дефолт если неизвестна)."""
+    if not category_slug:
+        return frozenset()
+    return VARIANT_SPEC_KEYS_BY_CATEGORY.get(
+        category_slug.strip().lower(), frozenset(),
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +64,13 @@ class MatchResult:
 
 
 def hard_reject(product: Product, features: Features) -> tuple[bool, str]:
+    """Проверяет — товары категорически НЕ могут быть смержены.
+
+    Учитывает VARIANT_SPEC_KEYS_BY_CATEGORY: variant-поля (ram_gb, storage_gb)
+    для категорий где они являются вариантами — НЕ отвергают матч.
+    Это позволяет варианты одной модели (Kingston 8GB и 16GB) попадать
+    в одну family.
+    """
     if features.category_id is not None and product.category_id != features.category_id:
         return True, 'category_mismatch'
     if product.merge_locked:
@@ -57,22 +81,36 @@ def hard_reject(product: Product, features: Features) -> tuple[bool, str]:
     if p_brand and f_brand and p_brand != f_brand:
         return True, 'brand_mismatch'
 
-
     p_mpn = (product.vendor_code or '').strip().upper()
     f_mpn = (features.model_code or '').strip().upper()
     if p_mpn and f_mpn and p_mpn != f_mpn:
         return True, 'mpn_mismatch'
 
-
+    # key_hash — family-уровневый (без variants). Если разные — точно
+    # разные семьи модели.
     p_key_hash = (product.key_hash or '').strip()
     f_key_hash = (features.key_hash or '').strip()
     if p_key_hash and f_key_hash and p_key_hash != f_key_hash:
         return True, 'key_hash_mismatch'
 
+    # Определяем какие поля являются variants для этой категории.
+    # ВНИМАНИЕ: category_slug может быть не у product (нужно резолвить через FK),
+    # но для скорости используем cache на features.category_id.
+    category_slug = ''
+    if product.category_id:
+        # Кэш для производительности
+        cat = getattr(product, '_cached_category', None) or product.category
+        category_slug = (cat.slug or '').lower() if cat else ''
+    variant_keys = _get_variant_keys_for_category(category_slug)
+
     p_specs: dict[str, Any] = product.specs_fingerprint or {}
     f_specs: dict[str, Any] = features.specs or {}
     for key in HARD_REJECT_KEYS:
         if key == 'model_code':
+            continue
+        # Если поле — вариант для этой категории, пропускаем
+        # (расхождение OK — это разные варианты одной семьи).
+        if key in variant_keys:
             continue
         pv = p_specs.get(key)
         fv = f_specs.get(key)

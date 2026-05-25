@@ -14,6 +14,7 @@ from .models import PriceHistory
 PRICE_DROP_THRESHOLD = 0.10
 
 AVG_WINDOW_DAYS = 30
+SHORT_WINDOW_DAYS = 7
 
 
 @dataclass
@@ -25,6 +26,21 @@ class PriceStats:
     max_price: int | None
     max_date: date | None
     avg_30d: int | None
+
+    # 7-дневное окно (зеркало "за всё время")
+    min_price_7d: int | None
+    min_date_7d: date | None
+    max_price_7d: int | None
+    max_date_7d: date | None
+    avg_7d: int | None
+    points_7d: int
+
+    # 30-дневное окно: min/max/даты (avg_30d уже есть выше)
+    min_price_30d: int | None
+    min_date_30d: date | None
+    max_price_30d: int | None
+    max_date_30d: date | None
+    points_30d: int
 
     delta_7d_pct: float | None
     delta_30d_pct: float | None
@@ -64,6 +80,29 @@ def _avg_for_window(
     if not prices:
         return None
     return int(round(sum(prices) / len(prices)))
+
+
+def _window_aggregates(
+    daily: list[tuple[date, int]],
+    *,
+    end: date,
+    days: int,
+) -> tuple[int | None, date | None, int | None, date | None, int | None, int]:
+    """Зеркало логики «за всё время», но на срезе [end-days+1 .. end].
+
+    Возвращает (min_price, min_date, max_price, max_date, avg, points_count).
+    Если в окне нет точек — все агрегаты None, points = 0.
+    """
+    if not daily or days <= 0:
+        return None, None, None, None, None, 0
+    start = end - timedelta(days=days - 1)
+    points = [(d, p) for d, p in daily if start <= d <= end]
+    if not points:
+        return None, None, None, None, None, 0
+    min_d, min_p = min(points, key=lambda x: x[1])
+    max_d, max_p = max(points, key=lambda x: x[1])
+    avg = int(round(sum(p for _, p in points) / len(points)))
+    return int(min_p), min_d, int(max_p), max_d, avg, len(points)
 
 
 def _price_n_days_ago(
@@ -121,6 +160,12 @@ def compute_product_price_stats(
             min_price=None, min_date=None,
             max_price=None, max_date=None,
             avg_30d=None,
+            min_price_7d=None, min_date_7d=None,
+            max_price_7d=None, max_date_7d=None,
+            avg_7d=None, points_7d=0,
+            min_price_30d=None, min_date_30d=None,
+            max_price_30d=None, max_date_30d=None,
+            points_30d=0,
             delta_7d_pct=None, delta_30d_pct=None,
             is_min_30d=False, is_min_all_time=False,
             drop_alert=False, drop_alert_pct=None,
@@ -129,7 +174,14 @@ def compute_product_price_stats(
 
     min_day, min_price = min(daily, key=lambda x: x[1])
     max_day, max_price = max(daily, key=lambda x: x[1])
-    avg_30d = _avg_for_window(daily, end=today, days=AVG_WINDOW_DAYS)
+
+    # Окна 7д / 30д — те же агрегаты, что и «за всё время», просто на срезе
+    (
+        min_7d, min_d_7d, max_7d, max_d_7d, avg_7d, pts_7d,
+    ) = _window_aggregates(daily, end=today, days=SHORT_WINDOW_DAYS)
+    (
+        min_30d_w, min_d_30d, max_30d, max_d_30d, avg_30d, pts_30d,
+    ) = _window_aggregates(daily, end=today, days=AVG_WINDOW_DAYS)
 
     price_7d_ago = _price_n_days_ago(daily, reference=today, days=7)
     price_30d_ago = _price_n_days_ago(daily, reference=today, days=30)
@@ -174,6 +226,17 @@ def compute_product_price_stats(
         max_price=int(max_price),
         max_date=max_day,
         avg_30d=avg_30d,
+        min_price_7d=min_7d,
+        min_date_7d=min_d_7d,
+        max_price_7d=max_7d,
+        max_date_7d=max_d_7d,
+        avg_7d=avg_7d,
+        points_7d=pts_7d,
+        min_price_30d=min_30d_w,
+        min_date_30d=min_d_30d,
+        max_price_30d=max_30d,
+        max_date_30d=max_d_30d,
+        points_30d=pts_30d,
         delta_7d_pct=delta_7d,
         delta_30d_pct=delta_30d,
         is_min_30d=is_min_30d,

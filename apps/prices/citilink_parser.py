@@ -20,6 +20,120 @@ logger = logging.getLogger(__name__)
 CITILINK_HOST = 'www.citilink.ru'
 CITILINK_BASE = 'https://www.citilink.ru'
 
+
+# CDP-инжект visibility override для Citilink.
+# Citilink — Next.js приложение с hydration, которое привязывает обработчики
+# к user interactions и проверяет document.visibilityState. При off-screen
+# окне или минимизированном Chrome JS-логика lazy-load + hydration не
+# запускается полностью, и часть карточек остаётся без цен/изображений.
+# Подменяем геттеры visibility так, чтобы страница всегда считала себя видимой.
+_CITILINK_FORCE_FOREGROUND_JS = r"""
+(function () {
+  try {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true, get: function () { return false; }
+    });
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true, get: function () { return 'visible'; }
+    });
+    Object.defineProperty(document, 'webkitHidden', {
+      configurable: true, get: function () { return false; }
+    });
+    Object.defineProperty(document, 'webkitVisibilityState', {
+      configurable: true, get: function () { return 'visible'; }
+    });
+    document.hasFocus = function () { return true; };
+  } catch (e) {}
+  // Citilink навешивает обработчики на visibilitychange/blur, которые
+  // приостанавливают подгрузку. Глушим эти события.
+  var BAD = ['blur', 'visibilitychange', 'webkitvisibilitychange',
+             'pagehide', 'freeze'];
+  for (var i = 0; i < BAD.length; i++) {
+    (function (name) {
+      window.addEventListener(name, function (e) {
+        e.stopImmediatePropagation();
+      }, true);
+      document.addEventListener(name, function (e) {
+        e.stopImmediatePropagation();
+      }, true);
+    })(BAD[i]);
+  }
+})();
+"""
+
+
+# Имитация активности пользователя — пробуждает Next.js hydration
+# и IntersectionObserver'ы для lazy-load изображений.
+_CITILINK_NUDGE_ACTIVITY_JS = r"""
+(function () {
+  try { window.focus(); } catch (e) {}
+  try {
+    var ev = new MouseEvent('mousemove', {
+      bubbles: true, cancelable: true,
+      clientX: 100 + Math.random() * 400,
+      clientY: 200 + Math.random() * 400
+    });
+    document.dispatchEvent(ev);
+    document.body && document.body.dispatchEvent(ev);
+  } catch (e) {}
+  try {
+    document.dispatchEvent(new Event('visibilitychange'));
+  } catch (e) {}
+})();
+"""
+
+
+# Проверка готовности страницы Citilink: ищем карточки с реальными ценами.
+# Citilink хранит цены в [data-meta-price] атрибуте, что надёжнее текста.
+_CITILINK_PRICE_READY_JS = r"""
+return (function () {
+  var cards = document.querySelectorAll(
+    '[data-meta-name="ProductHorizontalSnippet"],'
+    + '[data-meta-name="ProductVerticalSnippet"],'
+    + '[data-meta-name="ProductCardVerticalLayout"],'
+    + '[data-meta-name="ProductCardHorizontalLayout"],'
+    + '[data-meta-name="SearchSnippet"],'
+    + '[data-meta-name="ProductSnippet"]'
+  );
+  var priced = 0;
+  for (var i = 0; i < cards.length; i++) {
+    var p = cards[i].querySelector('[data-meta-price]');
+    if (p && p.getAttribute('data-meta-price')) {
+      var v = parseInt(p.getAttribute('data-meta-price'), 10);
+      if (v && v > 0) priced++;
+    }
+  }
+  return { cards: cards.length, priced: priced };
+})();
+"""
+
+
+# Инкрементальный скролл (как у DNS): шагаем на ~70% viewport,
+# даём IntersectionObserver сработать перед следующим шагом.
+_CITILINK_SCROLL_STEP_JS = r"""
+var step = arguments[0] || 700;
+var prevY = window.pageYOffset;
+window.scrollBy({ top: step, behavior: 'instant' });
+try {
+    window.dispatchEvent(new WheelEvent('wheel', { deltaY: step, bubbles: true }));
+} catch(e) {}
+try { window.dispatchEvent(new Event('scroll')); } catch(e) {}
+return {
+    prevY: prevY,
+    curY: window.pageYOffset,
+    maxY: Math.max(0, document.documentElement.scrollHeight
+                      - document.documentElement.clientHeight),
+    count: document.querySelectorAll(
+      '[data-meta-name="ProductHorizontalSnippet"],'
+      + '[data-meta-name="ProductVerticalSnippet"],'
+      + '[data-meta-name="ProductCardVerticalLayout"],'
+      + '[data-meta-name="ProductCardHorizontalLayout"],'
+      + '[data-meta-name="SearchSnippet"],'
+      + '[data-meta-name="ProductSnippet"]'
+    ).length
+};
+"""
+
 _CITILINK_CARDS_EXTRACT_JS = r"""
 return (function () {
   function cleanInt(raw) {
@@ -263,7 +377,9 @@ return (function () {
 
 _PAGES_COUNT_JS = r"""
 return (function () {
-  var PAGE_SIZE = 48;
+  // Citilink показывает по 36 товаров на страницу каталога (проверено в логах).
+  // Не 48 — это была ошибка в первой версии парсера.
+  var PAGE_SIZE = 36;
   // 1) Несколько вариантов data-атрибута со счётчиком товаров на странице.
   var countSelectors = [
     '[data-meta-name="SubcategoryPageTitle__product-count"]',
@@ -375,17 +491,56 @@ def _vendor_code_from_url(url: str) -> str:
 class CitilinkParser(ChromeDriverMixin, BaseParser):
 
     def __init__(self) -> None:
+        # Дефолт headless=True (как у DNS). На сервере без display
+        # headless=False не работает.
+        default_headless = bool(getattr(settings, 'CHROME_HEADLESS', True))
         self._init_chrome_runtime(
             page_timeout_setting='CITILINK_PAGE_LOAD_TIMEOUT',
             page_timeout_default=getattr(settings, 'DNS_PAGE_LOAD_TIMEOUT', 90),
             headless_setting='CITILINK_HEADLESS',
-            headless_default=False,
+            headless_default=default_headless,
             user_data_dir_setting='CITILINK_USER_DATA_DIR',
         )
         self.catalog_element_wait = int(getattr(settings, 'CITILINK_CATALOG_ELEMENT_WAIT', 45))
         self._city_code = (getattr(settings, 'CITILINK_CITY_CODE', '') or '').strip()
         self._max_pages = int(getattr(settings, 'CITILINK_MAX_PAGES', 80))
         self._warmed_up = False
+
+        # Параметры ожидания цен (как у DNS)
+        self._prices_wait_timeout = float(
+            getattr(settings, 'CITILINK_PRICES_WAIT_TIMEOUT', 25.0)
+        )
+        # Параметры скролла
+        self._scroll_max_rounds = int(
+            getattr(settings, 'CITILINK_SCROLL_MAX_ROUNDS', 20)
+        )
+        self._scroll_stable = int(
+            getattr(settings, 'CITILINK_SCROLL_STABLE', 3)
+        )
+
+    def _get_driver(self) -> Any:  # type: ignore[override]
+        # Расширяем базовый _get_driver: после создания драйвера
+        # инжектим visibility override через CDP. Это нужно чтобы Citilink
+        # работал с off-screen окном (для headless и для скрытого режима).
+        is_new = self._driver is None
+        driver = super()._get_driver()
+        if is_new:
+            try:
+                driver.execute_cdp_cmd(
+                    'Page.addScriptToEvaluateOnNewDocument',
+                    {'source': _CITILINK_FORCE_FOREGROUND_JS},
+                )
+                logger.info(
+                    'Citilink: инжектирован visibility-override '
+                    '(работа с off-screen окном).'
+                )
+            except Exception:
+                logger.warning(
+                    'Citilink: не удалось добавить visibility-override через CDP. '
+                    'Парсинг при свёрнутом окне может вернуть карточки без цен.',
+                    exc_info=True,
+                )
+        return driver
 
     @staticmethod
     def _check_blocked(driver: Any) -> None:
@@ -432,6 +587,11 @@ class CitilinkParser(ChromeDriverMixin, BaseParser):
         try:
             self._driver_get(driver, f'{CITILINK_BASE}/')
             time.sleep(2.0 + random.uniform(0.8, 1.8))
+            # Имитируем активность — пробуждаем Next.js hydration
+            try:
+                driver.execute_script(_CITILINK_NUDGE_ACTIVITY_JS)
+            except Exception:
+                pass
             try:
                 driver.execute_script('window.scrollBy(0, 400);')
             except Exception:
@@ -441,13 +601,102 @@ class CitilinkParser(ChromeDriverMixin, BaseParser):
             logger.debug('Citilink: warmup на главной не удался', exc_info=True)
         self._warmed_up = True
 
-    def _scroll_listing(self, driver: Any) -> None:
-        for _ in range(6):
+    def _wait_for_prices(
+        self,
+        driver: Any,
+        *,
+        min_priced: int = 6,
+        timeout: float | None = None,
+        poll: float = 0.6,
+    ) -> tuple[int, int]:
+        """Ждёт, пока на странице появятся цены у достаточного числа карточек.
+
+        Citilink подгружает данные через Next.js hydration. При off-screen
+        окне процесс может затормозиться — карточки видны, но цен ещё нет.
+        Возвращает (cards_total, priced_count) после ожидания.
+        """
+        if timeout is None:
+            timeout = self._prices_wait_timeout
+        deadline = time.time() + max(1.0, timeout)
+        last: tuple[int, int] = (0, 0)
+        while time.time() < deadline:
             try:
-                driver.execute_script('window.scrollBy(0, 900);')
+                info = driver.execute_script(_CITILINK_PRICE_READY_JS) or {}
+                cards = int(info.get('cards') or 0)
+                priced = int(info.get('priced') or 0)
             except Exception:
+                cards, priced = 0, 0
+            last = (cards, priced)
+            if cards > 0 and priced >= min(min_priced, cards):
+                return last
+            # Будим страницу: имитируем активность + микро-скролл
+            try:
+                driver.execute_script(_CITILINK_NUDGE_ACTIVITY_JS)
+            except Exception:
+                pass
+            try:
+                driver.execute_script(
+                    'window.scrollBy({top: arguments[0], behavior: "instant"});',
+                    120 if int(time.time()) % 2 == 0 else -120,
+                )
+            except Exception:
+                pass
+            time.sleep(poll)
+        return last
+
+    def _scroll_listing(self, driver: Any) -> None:
+        """Инкрементальный скролл с проверкой количества карточек.
+
+        В отличие от простого scrollBy×6, проверяем что после каждого шага
+        количество карточек растёт. Если N раундов без роста — выходим.
+        Это решает проблему когда Citilink загружает контент порциями.
+        """
+        # Размер шага — 70% viewport (как у DNS)
+        try:
+            viewport_h = driver.execute_script(
+                'return document.documentElement.clientHeight || 900;'
+            )
+            step = max(400, int(float(viewport_h) * 0.7))
+        except Exception:
+            step = 700
+
+        max_rounds = max(1, self._scroll_max_rounds)
+        need_stable = max(1, self._scroll_stable)
+        stable = 0
+        prev_count = 0
+
+        for rnd in range(max_rounds):
+            try:
+                info = driver.execute_script(_CITILINK_SCROLL_STEP_JS, step)
+            except Exception:
+                logger.debug('Citilink: scroll step JS failed', exc_info=True)
                 break
-            time.sleep(0.35)
+
+            cur_count = 0
+            at_bottom = False
+            if isinstance(info, dict):
+                cur_count = int(info.get('count') or 0)
+                at_bottom = info.get('curY', 0) >= info.get('maxY', 1) - 5
+
+            # Адаптивная пауза: на низу страницы ждём дольше (подгрузка)
+            time.sleep(random.uniform(0.4, 0.9) if not at_bottom else random.uniform(0.8, 1.4))
+
+            if cur_count > prev_count:
+                stable = 0
+                prev_count = cur_count
+                continue
+
+            stable += 1
+            if stable >= need_stable:
+                logger.debug(
+                    'Citilink scroll: %s раундов без роста (всего %s карточек)',
+                    stable, cur_count,
+                )
+                break
+
+            if at_bottom:
+                # Достигли низа без роста — пагинация решит проблему
+                break
 
     _CARD_PRESENCE_SELECTOR = (
         '[data-meta-name="ProductHorizontalSnippet"],'
@@ -607,6 +856,12 @@ class CitilinkParser(ChromeDriverMixin, BaseParser):
         self._check_blocked(driver)
         if page == 1:
             self._detect_redirect_to_root(driver, base_url)
+        # Имитируем активность — пробуждаем JS Citilink сразу после загрузки.
+        # Без этого при off-screen окне hydration может не запуститься.
+        try:
+            driver.execute_script(_CITILINK_NUDGE_ACTIVITY_JS)
+        except Exception:
+            pass
 
     def _detect_pages_count(self, driver: Any) -> int:
         try:
@@ -625,27 +880,86 @@ class CitilinkParser(ChromeDriverMixin, BaseParser):
         self._wait_cards(driver)
         self._scroll_listing(driver)
 
-        pages = self._detect_pages_count(driver)
+        # Ждём пока цены загрузятся (важно при off-screen окне)
+        cards_seen, priced = self._wait_for_prices(driver, min_priced=6)
+        if cards_seen and priced < cards_seen:
+            logger.info(
+                'Citilink: цены подгружены у %d / %d карточек на странице 1',
+                priced, cards_seen,
+            )
+        if cards_seen and priced == 0:
+            logger.warning(
+                'Citilink: за %.0fs ни у одной из %d карточек не появилась цена. '
+                'Возможно, JS Citilink не запустился (visibility override не сработал). '
+                'Будет fallback на __NEXT_DATA__.',
+                self._prices_wait_timeout, cards_seen,
+            )
+
+        # Определение количества страниц — для оценки, не как жёсткий предел.
+        # Citilink может вернуть неточное число (счётчик товаров устаревший
+        # или пагинация показывает не все ссылки). Парсим ДО пустой страницы,
+        # используя detect только для отображения "X из ~Y".
+        pages_est = self._detect_pages_count(driver)
         all_rows: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+
         first = self._extract_rows(driver)
         if not first:
             logger.warning('Citilink: на первой странице не удалось извлечь карточки')
         else:
             all_rows.extend(first)
-            logger.info('Citilink: страница 1/%d, карточек на странице %d', pages, len(first))
+            for row in first:
+                seen_urls.add(row.get('url', ''))
+            logger.info(
+                'Citilink: страница 1/~%d, карточек на странице %d (с ценами: %d)',
+                pages_est, len(first), priced,
+            )
 
-
-        for page in range(2, pages + 1):
+        # Парсим пока на странице есть НОВЫЕ товары.
+        # Останавливаемся при:
+        #   - 2 пустых страницах подряд (конец категории),
+        #   - страница без НОВЫХ товаров (Citilink начал повторять последнюю),
+        #   - достижении CITILINK_MAX_PAGES (защита от бесконечного цикла).
+        empty_streak = 0
+        for page in range(2, self._max_pages + 1):
             self._random_delay()
             self._open_listing_page(driver, base_url, page)
             self._scroll_listing(driver)
+            self._wait_for_prices(driver, min_priced=6)
             rows = self._extract_rows(driver)
-            if not rows:
-                logger.info('Citilink: страница %d пустая, остановка пагинации', page)
-                break
-            all_rows.extend(rows)
-            logger.info('Citilink: страница %d/%d, карточек на странице %d', page, pages, len(rows))
 
+            if not rows:
+                empty_streak += 1
+                logger.info(
+                    'Citilink: страница %d пустая (попытка %d/2)',
+                    page, empty_streak,
+                )
+                if empty_streak >= 2:
+                    logger.info('Citilink: 2 пустых страницы подряд → конец категории')
+                    break
+                continue
+
+            # Считаем НОВЫЕ товары (которых ещё не было на предыдущих страницах).
+            # Если все товары повторяются — Citilink начал зацикливаться,
+            # значит мы прошли все реальные страницы.
+            new_rows = [r for r in rows if r.get('url') and r['url'] not in seen_urls]
+            if not new_rows:
+                logger.info(
+                    'Citilink: страница %d не дала НОВЫХ товаров (все %d уже видели) → конец',
+                    page, len(rows),
+                )
+                break
+
+            empty_streak = 0
+            all_rows.extend(new_rows)
+            for r in new_rows:
+                seen_urls.add(r['url'])
+            logger.info(
+                'Citilink: страница %d/~%d, карточек %d (новых %d, всего %d)',
+                page, pages_est, len(rows), len(new_rows), len(seen_urls),
+            )
+
+        # Дедупликация по url на всякий случай (хотя seen_urls уже фильтрует)
         seen: dict[str, ParsedProduct] = {}
         for row in all_rows:
             parsed = self._row_to_parsed(row)

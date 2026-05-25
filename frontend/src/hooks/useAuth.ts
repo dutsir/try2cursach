@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { api } from '@/api/client'
 import type { User } from '@/types'
 
 interface AuthContextType {
@@ -26,7 +27,7 @@ export function useAuth(): AuthContextType {
 
   const logout = useCallback(async () => {
     try {
-      await fetch('/api/auth/logout/', { method: 'POST', credentials: 'include' })
+      await api.post('/api/auth/logout/', {})
       authState = initialState
       setState(initialState)
     } catch (e) {
@@ -39,12 +40,9 @@ export function useAuth(): AuthContextType {
 
 export async function initAuth(): Promise<User | null> {
   try {
-    const res = await fetch('/api/auth/me/', { credentials: 'include' })
-    if (res.ok) {
-      const user = await res.json()
-      authState = { user, loading: false, isAuth: true, logout: async () => {} }
-      return user
-    }
+    const user = await api.get<User>('/api/auth/me/')
+    authState = { user, loading: false, isAuth: true, logout: async () => {} }
+    return user
   } catch (e) {
     console.error('Auth check failed:', e)
   }

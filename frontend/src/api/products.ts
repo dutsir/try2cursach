@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { PaginatedResponse, Product, ProductDetail, PriceHistory } from '@/types'
+import type { PaginatedResponse, Product, ProductDetail, PriceHistory, PriceStats } from '@/types'
 
 export interface ProductsParams {
   search?: string
@@ -25,7 +25,10 @@ export const productsApi = {
     api.get<ProductDetail>(`/api/products/${id}/`),
 
   priceHistory: (id: number) =>
-    api.get<PriceHistory[]>(`/api/products/${id}/price_history/`),
+    api.get<PriceHistory[]>(`/api/products/${id}/price-history/`),
+
+  priceStats: (id: number) =>
+    api.get<PriceStats>(`/api/products/${id}/price-stats/`),
 
   offers: (id: number) =>
     api.get<{ results: import('@/types').Offer[] }>(`/api/products/${id}/offers/`),

@@ -49,6 +49,17 @@ def _tokens(name: str) -> set[str]:
     return {t for t in _normalize_name(name).split() if len(t) > 1 and t != '/'}
 
 
+_FALSE_MPN_PATTERNS = (
+    re.compile(r'^\d{3,4}[xXхХ]\d{3,4}$'),       # разрешения: 1920x1080, 2560x1440
+    re.compile(r'^\d{2,4}[ ]?(Hz|Гц)$', re.IGNORECASE),  # частоты: 60Hz, 144Гц
+    re.compile(r'^\d{2,4}(p|i|K|К)$', re.IGNORECASE),    # 1080p, 4K, 4К
+    re.compile(r'^\d{1,3}[xXхХ]\d{1,3}$'),       # размеры: 32x14
+    re.compile(r'^\d{1,4}\.?\d*(GB|MB|TB|ГБ|МБ|ТБ)$', re.IGNORECASE),  # объёмы
+    re.compile(r'^\d{1,4}(W|Вт|w)$', re.IGNORECASE),     # мощность
+    re.compile(r'^v?\d+\.\d+(\.\d+)?$'),         # версии: 1.2.3, v3.0
+)
+
+
 def _looks_like_mpn(value: str) -> bool:
     v = (value or '').strip()
     if len(v) < 4:
@@ -67,6 +78,12 @@ def _looks_like_mpn(value: str) -> bool:
     head, sep, _ = v.partition('-')
     if sep and head.isalpha() and len(head) <= 3 and head.lower() in {'id', 'wb', 'sku'}:
         return False
+
+    # Отбрасываем строки которые выглядят как технические характеристики,
+    # а не артикулы производителя (разрешение монитора, частота, объём и т.п.).
+    for pat in _FALSE_MPN_PATTERNS:
+        if pat.match(v):
+            return False
     return True
 
 
@@ -461,7 +478,17 @@ def normalize_offer(
     sku: str = '',
     url: str = '',
     mpn_hint: str = '',
+    category_slug: str = '',
 ) -> Features:
+    """Нормализует один Offer/Product в Features для матчинга.
+
+    Если указан category_slug и для категории есть family-экстрактор
+    (см. apps.products.dedupe.family._model_code_for_category) — используем
+    его для получения семейного model_code (например "amd ryzen 5 5600xt").
+    Это намного лучше для дедупликации, чем сырой MPN из URL/SKU.
+
+    Без family-экстрактора — fallback на extract_mpn (артикул производителя).
+    """
     brand = extract_brand(name)
     mpn, mpn_src = extract_mpn(name, sku=sku, url=url, hint=mpn_hint)
     specs = extract_specs(name)
@@ -470,6 +497,23 @@ def normalize_offer(
         for k, v in variant_specs.items():
             if k not in specs or specs.get(k) in (None, ''):
                 specs[k] = v
+
+    # Если для категории есть family-экстрактор — используем его.
+    # Это даёт семейный model_code вместо сырого MPN.
+    if category_slug:
+        try:
+            # Lazy import чтобы избежать циклической зависимости
+            from .family import _model_code_for_category
+            family_model_code = _model_code_for_category(
+                name=name, brand=brand, vendor_code=mpn, slug=category_slug,
+            )
+            if family_model_code:
+                # Семейный model_code приоритетнее MPN для дедупликации
+                mpn = family_model_code
+                mpn_src = 'family_extractor'
+        except Exception:
+            pass  # fallback на extract_mpn (mpn уже установлен)
+
     clean = _normalize_name(name)
     tokens = frozenset(t for t in clean.split() if len(t) > 1)
     return Features(

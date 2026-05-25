@@ -228,7 +228,7 @@ export default function WishlistPage() {
                       'text-sm font-bold',
                       available ? 'text-steam-green' : 'text-steam-dim',
                     )}>
-                      {item.product.best_offer
+                      {item.product.best_offer && item.product.best_offer.price
                         ? formatPrice(item.product.best_offer.price * item.quantity)
                         : '—'}
                     </p>

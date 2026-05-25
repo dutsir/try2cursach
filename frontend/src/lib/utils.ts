@@ -7,8 +7,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatPrice(price: number): string {
-  return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(price)
+export function formatPrice(price: number | string | null | undefined): string {
+  if (!price) return '—'
+  const num = typeof price === 'string' ? parseFloat(price) : price
+  return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(num)
 }
 
 export function formatRelativeDate(dateStr: string): string {
@@ -27,8 +29,12 @@ export function formatDate(dateStr: string): string {
   }
 }
 
-export function discount(price: number, oldPrice: number): number {
-  return Math.round(((oldPrice - price) / oldPrice) * 100)
+export function discount(price?: number | string | null, oldPrice?: number | string | null): number {
+  if (!price || !oldPrice) return 0
+  const p = typeof price === 'string' ? parseFloat(price) : price
+  const op = typeof oldPrice === 'string' ? parseFloat(oldPrice) : oldPrice
+  if (!p || !op) return 0
+  return Math.round(((op - p) / op) * 100)
 }
 
 export const SOURCE_LABELS: Record<string, string> = {

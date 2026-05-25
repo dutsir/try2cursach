@@ -164,7 +164,27 @@ def _touch_product(product: Product, *, features: Features, name: str, image_url
 
     product.last_parsed_at = timezone.now()
     updates.extend(['last_parsed_at', 'updated_at'])
-    product.save(update_fields=list(dict.fromkeys(updates)))
+    fields = list(dict.fromkeys(updates))
+    try:
+        product.save(update_fields=fields)
+    except IntegrityError as exc:
+        # Уникальный ключ (category, brand, vendor_code) может конфликтовать —
+        # часто features.model_code = «1920X1080» / разрешение монитора,
+        # что не настоящий артикул производителя. Откатываем обновление
+        # vendor_code и пробуем сохранить остальные поля.
+        msg = str(exc)
+        if 'vendor_code' in msg or 'brand_mpn_in_category' in msg:
+            logger.warning(
+                'IntegrityError vendor_code для product_id=%s (%s). '
+                'Откатываю обновление vendor_code, сохраняю остальные поля.',
+                product.pk, msg.splitlines()[0] if msg else '?',
+            )
+            product.refresh_from_db(fields=['vendor_code'])
+            cleaned = [f for f in fields if f != 'vendor_code']
+            if cleaned:
+                product.save(update_fields=cleaned)
+        else:
+            raise
     if product.match_embedding is None:
         sync_product_embedding(product, features, name)
 

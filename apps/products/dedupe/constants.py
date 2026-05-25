@@ -34,12 +34,16 @@ SOFT_CONFLICT_PENALTY: dict[str, float] = {
 }
 
 
+# ВАЖНО: HARD_REJECT_KEYS — поля, расхождение которых ЗАПРЕЩАЕТ матчинг.
+# Раньше тут были ram_gb, storage_gb, screen_in — но это варианты!
+# Kingston FURY 8GB и 16GB должны быть в одной family как варианты,
+# а не отвергаться по ram_gb.
+#
+# Логика умнее: variant-поля учитываются в hard_reject через
+# VARIANT_SPEC_KEYS_BY_CATEGORY — если для категории это variant,
+# то расхождение ОК; иначе — conflict.
 HARD_REJECT_KEYS: tuple[str, ...] = (
     'model_code',
-    'ram_gb',
-    'storage_gb',
-    'screen_in',
-    'variant_key',
 )
 
 
@@ -160,8 +164,38 @@ VARIANT_SPEC_KEYS_BY_CATEGORY: dict[str, frozenset[str]] = {
     # разные объёмы и kit-комплекты (1x8, 2x8, 2x16).
     'operativnaya-pamyat': frozenset({'ram_gb', 'modules_count'}),
     'servernaya-pamyat': frozenset({'ram_gb', 'modules_count'}),
-    # GPU/мониторы пока не делаем — без точного экстрактора подмодели
-    # получаются мусорные склейки (см. отчёт whatif_families).
+
+    # === Новые (с экстракторами model_code в family.py) ===
+    # GPU: одна модель чипа — разные объёмы памяти (RTX 4060 8GB vs 12GB)
+    'videokarty': frozenset({'memory_gb'}),
+    # Мониторы: одна линейка — разные размеры/разрешения (LG 27UP650 vs 32UP650)
+    'monitory': frozenset({'screen_in', 'resolution'}),
+    # CPU/MB/PSU обычно без вариантов (каждая модель = свой Product),
+    # но включаем в систему для дедупликации между источниками.
+    'processory': frozenset(),
+    'servernye-processory': frozenset(),
+    'materinskie-platy': frozenset(),
+    'servernye-materinskie-platy': frozenset(),
+    'bloki-pitaniya': frozenset(),
+    'servernye-bloki-pitaniya': frozenset(),
+
+    # === Этап A: simple категории ===
+    # Карты памяти: одна модель — разные объёмы (Kingston Canvas Select Plus 64/128/512GB)
+    'karty-pamyati': frozenset({'storage_gb'}),
+    # Внешние HDD: одна модель — разные объёмы (WD My Passport 1/2/4TB)
+    'vneshnie-zhestkie-diski': frozenset({'storage_gb'}),
+    # Остальные обычно без вариантов
+    'mikrofony': frozenset(),
+    'zvukovye-karty': frozenset(),
+    'setevye-hranilisha': frozenset(),
+    'ohlazhdenie-dlya-servernyh-processorov': frozenset(),
+    'servernye-korpusa': frozenset(),
+    'naushniki': frozenset(),
+
+    # === Этап B: периферия (brand dictionary) ===
+    'myshi': frozenset(),
+    'klaviatury': frozenset(),
+    'korpusa': frozenset(),
 }
 
 

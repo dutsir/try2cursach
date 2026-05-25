@@ -5,6 +5,7 @@ import { User, Mail, Lock, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useToast } from '@/components/ui/Toast'
+import { api, ApiError } from '@/api/client'
 import type { User as UserType } from '@/types'
 
 interface RegisterProps {
@@ -45,23 +46,22 @@ export default function Register({ onRegister }: RegisterProps) {
     }
 
     try {
-      const res = await fetch('/api/auth/register/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      })
-
-      if (res.ok) {
-        const user = await res.json()
-        toast('Регистрация успешна!', 'success')
-        onRegister?.(user)
-        setTimeout(() => navigate('/'), 300)
-      } else {
-        const err = await res.json()
-        setError(Object.values(err).flat()[0] as string || 'Ошибка регистрации')
-      }
+      const user = await api.post<UserType>('/api/auth/register/', formData)
+      toast('Регистрация успешна!', 'success')
+      onRegister?.(user)
+      setTimeout(() => navigate('/'), 300)
     } catch (e) {
-      setError('Ошибка при регистрации')
+      if (e instanceof ApiError) {
+        try {
+          const errors = JSON.parse(e.body)
+          const firstError = Object.values(errors).flat()[0] as string
+          setError(firstError || 'Ошибка регистрации')
+        } catch {
+          setError(e.body || 'Ошибка регистрации')
+        }
+      } else {
+        setError('Ошибка при регистрации')
+      }
     } finally {
       setLoading(false)
     }

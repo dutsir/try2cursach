@@ -85,6 +85,7 @@ class CategoryListing(BaseModel):
         DNS = 'dns', 'DNS'
         CITILINK = 'citilink', 'Ситилинк'
         OZON = 'ozon', 'Ozon'
+        WB = 'wb', 'Wildberries'
 
     category = models.ForeignKey(
         Category,
@@ -288,6 +289,7 @@ class Offer(BaseModel):
         DNS = 'dns', 'DNS'
         OZON = 'ozon', 'Ozon'
         CITILINK = 'citilink', 'Ситилинк'
+        WB = 'wb', 'Wildberries'
 
     product = models.ForeignKey(
         Product,

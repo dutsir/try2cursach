@@ -134,7 +134,7 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
             value={targetPrice}
             onChange={e => setTargetPrice(e.target.value)}
           />
-          {selected?.best_offer && targetPrice && (
+          {selected?.best_offer && selected.best_offer.price && targetPrice && (
             <p className="text-xs text-white/40">
               Текущая цена: {formatPrice(selected.best_offer.price)} —{' '}
               скидка {Math.round((1 - parseFloat(targetPrice) / selected.best_offer.price) * 100)}%

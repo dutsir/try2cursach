@@ -513,6 +513,20 @@ class ChromeDriverMixin:
         if ver_main is not None:
             uc_kwargs['version_main'] = ver_main
             logger.info('undetected_chromedriver version_main=%s', ver_main)
+
+        # Принудительно указываем путь к Google Chrome.
+        # Без этого undetected_chromedriver может подхватить /usr/bin/chromium-browser
+        # (это snap-wrapper, который ломает парсинг даже если snap-chromium удалён).
+        chrome_paths = [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/opt/google/chrome/google-chrome',
+        ]
+        for path in chrome_paths:
+            if os.path.exists(path):
+                uc_kwargs['browser_executable_path'] = path
+                logger.info('Chrome binary: %s', path)
+                break
         if use_xvfb:
             logger.info(
                 'Xvfb-режим: Chrome запущен на виртуальном дисплее %s',
@@ -637,6 +651,7 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         self._init_chrome_runtime(
             page_timeout_setting='DNS_PAGE_LOAD_TIMEOUT',
             page_timeout_default=60,
+            user_data_dir_setting='DNS_USER_DATA_DIR',
         )
         self.catalog_element_wait = int(getattr(settings, 'DNS_CATALOG_ELEMENT_WAIT', 60))
         self.catalog_scroll_max_rounds = int(

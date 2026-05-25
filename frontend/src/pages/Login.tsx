@@ -5,6 +5,7 @@ import { Mail, Lock, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useToast } from '@/components/ui/Toast'
+import { api, ApiError } from '@/api/client'
 import type { User } from '@/types'
 
 interface LoginProps {
@@ -24,24 +25,21 @@ export default function Login({ onLogin }: LoginProps) {
     setLoading(true)
 
     try {
-      const res = await fetch('/api/auth/login/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ username, password }),
-      })
-
-      if (res.ok) {
-        const user = await res.json()
-        onLogin?.(user)
-        toast('Вы вошли в систему', 'success')
-        setTimeout(() => navigate('/'), 300)
-      } else {
-        const err = await res.json()
-        toast(err.error || 'Неверный логин или пароль', 'error')
-      }
+      const user = await api.post<User>('/api/auth/login/', { username, password })
+      onLogin?.(user)
+      toast('Вы вошли в систему', 'success')
+      setTimeout(() => navigate('/'), 300)
     } catch (e) {
-      toast('Ошибка при входе', 'error')
+      if (e instanceof ApiError) {
+        try {
+          const err = JSON.parse(e.body)
+          toast(err.error || 'Неверный логин или пароль', 'error')
+        } catch {
+          toast('Неверный логин или пароль', 'error')
+        }
+      } else {
+        toast('Ошибка при входе', 'error')
+      }
     } finally {
       setLoading(false)
     }
