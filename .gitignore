@@ -67,10 +67,11 @@ coverage.xml
 
 # Claude / Cursor worktrees (локальные копии, не часть проекта)
 .claude/
-
-
+*.env.bak.*
+*.txt
 *.md
 # Модели sentence-transformers (скачиваются при первом rebuild_embeddings)
 .cache/
 models/
-
+*.sh
+*.ps1

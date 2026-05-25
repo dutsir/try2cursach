@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   postgres:
     image: timescale/timescaledb-ha:pg17
@@ -62,6 +60,12 @@ services:
     container_name: pm_web
     restart: unless-stopped
     env_file: .env
+    # Перекрываем хосты из .env: внутри Docker-сети используются service names,
+    # а .env по умолчанию настроен на localhost (для хостового Celery worker).
+    environment:
+      DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
     ports:
       - "8000:8000"
     volumes:
@@ -72,26 +76,29 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 1.5G
-        reservations:
-          memory: 1G
     command: >
       sh -c "python manage.py migrate &&
              python manage.py seed_categories --update &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
 
   celery-worker:
+    profiles: ["docker-celery"]
     build:
       context: .
       dockerfile: docker/Dockerfile.celery
     container_name: pm_celery_worker
     restart: unless-stopped
     env_file: .env
+    environment:
+      DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
     volumes:
       - .:/app
+      # Для переезда worker'а в Docker — раскомментировать чтобы переиспользовать
+      # хостовые драйверы и warmed-up Chrome профили (избежать повторного Qrator-challenge):
+      # - ~/.local/share/undetected_chromedriver:/root/.local/share/undetected_chromedriver
+      # - ./var/chrome_profiles:/app/var/chrome_profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,12 +114,17 @@ services:
           memory: 1.5G
 
   celery-beat:
+    profiles: ["docker-celery"]
     build:
       context: .
       dockerfile: docker/Dockerfile.celerybeat
     container_name: pm_celery_beat
     restart: unless-stopped
     env_file: .env
+    environment:
+      DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
     volumes:
       - .:/app
     depends_on:
@@ -138,7 +150,11 @@ services:
       BACKEND_URL: http://web:8000
 
 volumes:
+  # postgres_data — external volume (pm_postgres_data), Docker НЕ удалит его при `down -v`.
+  # Создание и миграция данных с дефолтного volume — см. scripts/migrate_postgres_volume_to_external.sh
   postgres_data:
+    external: true
+    name: pm_postgres_data
   rabbitmq_data:
   redis_data:
   static_volume:
