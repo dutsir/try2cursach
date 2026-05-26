@@ -8,7 +8,10 @@ import { PageSpinner } from '@/components/ui/Spinner'
 import { initAuth } from '@/hooks/useAuth'
 import type { User } from '@/types'
 
+const Dashboard     = lazy(() => import('@/pages/Dashboard'))
 const Catalog       = lazy(() => import('@/pages/Catalog'))
+const Compare       = lazy(() => import('@/pages/Compare'))
+const Builder       = lazy(() => import('@/pages/Builder'))
 const Wishlist      = lazy(() => import('@/pages/Wishlist'))
 const ProductDetail = lazy(() => import('@/pages/ProductDetail'))
 const Notifications = lazy(() => import('@/pages/Notifications'))
@@ -59,7 +62,10 @@ export default function App() {
                   <Layout user={user} onLogout={() => setUser(null)} />
                 </ProtectedRoute>
               }>
-                <Route path="/"                  element={<Catalog />} />
+                <Route path="/"                  element={<Dashboard />} />
+                <Route path="/catalog"           element={<Catalog />} />
+                <Route path="/compare"           element={<Compare />} />
+                <Route path="/builder"           element={<Builder />} />
                 <Route path="/wishlist"          element={<Wishlist />} />
                 <Route path="/products/:id"      element={<ProductDetail />} />
                 <Route path="/notifications"     element={<Notifications />} />

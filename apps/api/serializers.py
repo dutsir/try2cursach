@@ -93,16 +93,20 @@ def _best_offer_summary(product: Product) -> dict | None:
             return None
         return {
             'price': str(legacy.price),
+            'old_price': str(legacy.old_price) if legacy.old_price else None,
             'source': legacy.source,
             'source_display': dict(PriceHistory.Source.choices).get(legacy.source, legacy.source),
             'url': product.url,
+            'image_url': product.image_url or '',
             'offers_count': 0,
         }
     return {
         'price': str(best.price),
+        'old_price': str(best.old_price) if best.old_price else None,
         'source': best.offer.source,
         'source_display': best.offer.get_source_display(),
         'url': best.offer.url,
+        'image_url': best.offer.image_url or product.image_url or '',
         'offers_count': product.offers.count(),
     }
 

@@ -105,12 +105,16 @@ class Command(BaseCommand):
         )
 
         if not is_sync:
-            self.stderr.write(
-                self.style.WARNING(
-                    'Async режим пока не реализован (нужен Celery task). '
-                    'Используйте --sync.'
+            from apps.prices.tasks import task_parse_wb_category
+            for category in cat_list:
+                r = task_parse_wb_category.delay(category.id)
+                self.stdout.write(
+                    f'  {category.slug:30} → task {r.id}'
                 )
-            )
+            self.stdout.write(self.style.SUCCESS(
+                f'Поставлено в очередь {len(cat_list)} задач. '
+                'Запусти worker: ./scripts/run_celery_worker.sh'
+            ))
             return
 
         # Синхронный парсинг
@@ -162,15 +166,48 @@ class Command(BaseCommand):
 
         if dry_run:
             self.stdout.write(self.style.WARNING('  (dry-run: НЕ сохраняем в БД)'))
-            # В dry-run просто выведем первые 3 товара
             for p in products[:3]:
-                self.stdout.write(f'    └─ {p.name[:80]} → {p.price}₽')
+                self.stdout.write(
+                    f'    └─ {p.name[:80]} → {p.price}₽  extra={p.extra}'
+                )
             return
 
-        # TODO Этап 5: интеграция с _persist_parsed_batch из tasks.py
-        # На skeleton этапе показываем что сохранение не реализовано
-        self.stdout.write(
-            self.style.WARNING(
-                '  (skeleton: сохранение в БД будет добавлено на Этапе 5)'
-            )
+        # Сохранение в БД через общую функцию tasks.py (батчинг + дедупликация + цены)
+        from apps.prices.tasks import _persist_parsed_batch
+        from apps.prices.models import ParseRun, PriceHistory
+        from django.utils import timezone
+
+        # Создаём ParseRun чтобы попало в админку и мониторинг
+        run = ParseRun.objects.create(
+            source=PriceHistory.Source.WB.value,
+            category=category,
+            status=ParseRun.Status.RUNNING,
         )
+        run.parsed_count = len(products)
+        try:
+            metrics = _persist_parsed_batch(
+                category=category,
+                source=PriceHistory.Source.WB.value,
+                parsed_products=products,
+                sync=True,
+                run=run,
+            )
+            run.status = ParseRun.Status.OK
+            run.finished_at = timezone.now()
+            run.save(update_fields=[
+                'status', 'finished_at', 'parsed_count', 'saved_offers',
+                'new_offers', 'new_products', 'saved_prices', 'updated_at',
+            ])
+            self.stdout.write(
+                f'  ✓ saved={metrics["saved"]} new_offers={metrics["new_offers"]} '
+                f'new_products={metrics["new_products"]} prices={metrics["saved_prices"]}'
+            )
+        except Exception as exc:
+            run.status = ParseRun.Status.ERROR
+            run.error_message = f'{type(exc).__name__}: {exc}'[:4000]
+            run.finished_at = timezone.now()
+            run.save(update_fields=[
+                'status', 'finished_at', 'parsed_count', 'error_message', 'updated_at',
+            ])
+            self.stderr.write(self.style.ERROR(f'  Сохранение упало: {exc}'))
+            logger.exception('WB save %s', category.slug)

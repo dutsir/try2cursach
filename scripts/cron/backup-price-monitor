@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Ежедневный бэкап БД price_monitor через pg_dump из контейнера pm_postgres.
+# Устанавливается командой: scripts/cron/install.sh
+# Логи: ~/pm_backups/backup.log
+#
+# DB_USER, DB_NAME подтягиваются из .env проекта (не хардкод).
+set -euo pipefail
+
+PROJECT_DIR="/home/yulechka/projects/try2cursach"
+BACKUP_DIR="/home/yulechka/pm_backups"
+KEEP_DAYS=30
+
+mkdir -p "$BACKUP_DIR"
+
+# Подтянуть DB_USER/DB_NAME из .env (если файл существует)
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$PROJECT_DIR/.env"
+    set +a
+fi
+
+cd "$PROJECT_DIR"
+BACKUP_DIR="$BACKUP_DIR" \
+KEEP_DAYS="$KEEP_DAYS" \
+DB_USER="${DB_USER:-postgres}" \
+DB_NAME="${DB_NAME:-price_monitor}" \
+    ./scripts/backup.sh >> "$BACKUP_DIR/backup.log" 2>&1

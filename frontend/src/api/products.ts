@@ -9,6 +9,10 @@ export interface ProductsParams {
   page?: number
   page_size?: number
   source?: string
+  brand?: string
+  min_price?: number
+  max_price?: number
+  in_stock?: boolean
 }
 
 export interface Category {

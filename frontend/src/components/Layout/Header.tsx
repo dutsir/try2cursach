@@ -6,7 +6,10 @@ import { cn } from '@/lib/utils'
 import type { User as UserType } from '@/types'
 
 const NAV = [
-  { to: '/',          label: 'КАТАЛОГ' },
+  { to: '/',          label: 'ГЛАВНАЯ' },
+  { to: '/catalog',   label: 'КАТАЛОГ' },
+  { to: '/builder',   label: 'СБОРКА ПК' },
+  { to: '/compare',   label: 'СРАВНЕНИЕ' },
   { to: '/wishlist',  label: 'ВИШЛИСТ' },
   { to: '/anomalies', label: 'АНОМАЛИИ' },
 ]

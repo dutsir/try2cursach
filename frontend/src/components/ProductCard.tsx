@@ -4,6 +4,7 @@ import { ExternalLink, Package, Heart, BookmarkPlus } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatPrice, discount, SOURCE_LABELS } from '@/lib/utils'
 import { wishlistApi } from '@/api/wishlist'
+import { CompareCheckbox } from './CompareCheckbox'
 import type { Product } from '@/types'
 
 interface ProductCardProps {
@@ -102,6 +103,8 @@ export function ProductCard({ product, onSubscribe, subscribed, wishlistItemId }
                 <ExternalLink size={14} />
               </a>
             )}
+
+            <CompareCheckbox productId={product.id} />
 
             <button
               onClick={e => { e.preventDefault(); toggleWishlist.mutate({ remove: inWishlist, itemId: wishlistItemId }) }}

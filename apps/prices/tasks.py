@@ -80,6 +80,33 @@ def _persist_parsed_batch(
             if res.product_created:
                 new_products += 1
 
+    # Обновить extra_metadata для офферов с дополнительными полями (rating, brand и т.п.)
+    items_with_extra = [
+        item for item in parsed_products
+        if getattr(item, 'extra', None)
+    ]
+    if items_with_extra:
+        raw_names = [item.name for item in items_with_extra]
+        offers_by_name = {
+            o.raw_name: o
+            for o in Offer.objects.filter(source=source, raw_name__in=raw_names)
+        }
+        extra_updated = 0
+        for item in items_with_extra:
+            offer = offers_by_name.get(item.name)
+            if not offer:
+                continue
+            merged = dict(offer.extra_metadata or {})
+            merged.update(item.extra)
+            offer.extra_metadata = merged
+            offer.save(update_fields=['extra_metadata', 'updated_at'])
+            extra_updated += 1
+        if extra_updated:
+            logger.info(
+                'Обновлены extra_metadata для %d офферов (source=%s)',
+                extra_updated, source,
+            )
+
     # Сохранение цен (после дедупликации)
     # Повторно обработаем товары для сохранения цен
     for item in parsed_products:
@@ -336,6 +363,59 @@ def task_parse_ozon_category(self, category_id: int) -> dict:
 
     with OzonParser() as parser:
         return parse_category_with_parser_ozon(category, parser)
+
+
+def parse_wb_category_with_parser(
+    category: Category,
+    parser: Any,
+    *,
+    sync: bool = False,
+) -> dict:
+    """Парсинг категории Wildberries (через HTTP API, без Chrome).
+
+    Использует CategoryListing.external_path формата:
+      - catalog:  'shard:electronic73|query:subject=3274'
+      - search:   'видеокарта'
+    """
+    wb_path = category.store_path(PriceHistory.Source.WB.value)
+    if not wb_path:
+        logger.warning(
+            'Категория %s: нет активной привязки Wildberries (CategoryListing)',
+            category.slug,
+        )
+        return {'status': 'skipped', 'category': category.slug, 'reason': 'no_wb_listing'}
+
+    def _do() -> list:
+        return parser.parse_category(wb_path) or []
+
+    return _run_with_instrumentation(
+        category=category,
+        source=PriceHistory.Source.WB.value,
+        sync=sync,
+        parse_fn=_do,
+        log_label='Парсинг WB',
+    )
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=30,
+    retry_backoff_max=300,
+    max_retries=3,
+    acks_late=True,
+)
+def task_parse_wb_category(self, category_id: int) -> dict:
+    from .wildberries_parser import WildberriesParser
+
+    try:
+        category = Category.objects.get(pk=category_id, is_active=True)
+    except Category.DoesNotExist:
+        logger.warning('Категория id=%d не найдена или неактивна', category_id)
+        return {'status': 'skipped', 'reason': 'category_not_found'}
+
+    with WildberriesParser() as parser:
+        return parse_wb_category_with_parser(category, parser)
 
 
 @shared_task(

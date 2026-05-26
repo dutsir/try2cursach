@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -234,6 +234,7 @@ class ParsedProduct:
     image_url: str = ''
     old_price: int | None = None
     is_available: bool = True
+    extra: dict = field(default_factory=dict)
 
 
 def _chrome_major_version() -> int | None:

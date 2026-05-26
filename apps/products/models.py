@@ -335,6 +335,15 @@ class Offer(BaseModel):
     is_available = models.BooleanField('В наличии', default=True)
     last_seen_at = models.DateTimeField('Последний успешный парсинг', null=True, blank=True)
 
+    extra_metadata = models.JSONField(
+        'Доп. метаданные источника',
+        default=dict, blank=True,
+        help_text=(
+            'Поля специфичные для источника: rating, reviews_count, brand, '
+            'brand_id, sale_percent, cashback_percent, supplier и т.д.'
+        ),
+    )
+
     class Meta:
         verbose_name = 'Оффер'
         verbose_name_plural = 'Офферы'
