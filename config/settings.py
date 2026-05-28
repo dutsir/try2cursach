@@ -369,3 +369,7 @@ LOGGING = {
         },
     },
 }
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
+AI_COMPARE_CACHE_TTL = int(os.getenv('AI_COMPARE_CACHE_TTL', '86400'))

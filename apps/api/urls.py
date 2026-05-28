@@ -17,6 +17,7 @@ urlpatterns = [
     path('categories/<slug:slug>/facets/', views.CategoryFacetsView.as_view(), name='category-facets'),
     path('dashboard/', views.DashboardView.as_view(), name='dashboard'),
     path('compare/', views.CompareView.as_view(), name='compare'),
+    path('compare/ai-summary/', views.AICompareSummaryView.as_view(), name='compare-ai-summary'),
     path('auth/register/', views.register, name='register'),
     path('auth/login/', views.login_view, name='login'),
     path('auth/logout/', views.logout_view, name='logout'),

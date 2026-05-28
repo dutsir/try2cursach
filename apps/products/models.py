@@ -86,6 +86,7 @@ class CategoryListing(BaseModel):
         CITILINK = 'citilink', 'Ситилинк'
         OZON = 'ozon', 'Ozon'
         WB = 'wb', 'Wildberries'
+        REGARD = 'regard', 'Регард'
 
     category = models.ForeignKey(
         Category,
@@ -290,6 +291,7 @@ class Offer(BaseModel):
         OZON = 'ozon', 'Ozon'
         CITILINK = 'citilink', 'Ситилинк'
         WB = 'wb', 'Wildberries'
+        REGARD = 'regard', 'Регард'
 
     product = models.ForeignKey(
         Product,

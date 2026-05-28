@@ -11,6 +11,7 @@ class PriceHistory(BaseModel):
         OZON = 'ozon', 'Ozon'
         CITILINK = 'citilink', 'Ситилинк'
         WB = 'wb', 'Wildberries'
+        REGARD = 'regard', 'Регард'
 
     product = models.ForeignKey(
         Product,
@@ -58,6 +59,7 @@ class ParseRun(BaseModel):
         OZON = 'ozon', 'Ozon'
         CITILINK = 'citilink', 'Ситилинк'
         WB = 'wb', 'Wildberries'
+        REGARD = 'regard', 'Регард'
 
     class Status(models.TextChoices):
         RUNNING = 'running', 'Идёт'

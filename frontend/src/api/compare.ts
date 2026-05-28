@@ -45,7 +45,14 @@ export interface CompareItem {
   value_score: number
 }
 
+export interface AISummaryResponse {
+  verdict: string
+  cached: boolean
+}
+
 export const compareApi = {
   get: (ids: number[]) =>
     api.get<CompareItem[]>('/api/compare/', { ids: ids.join(',') }),
+  aiSummary: (ids: number[]) =>
+    api.get<AISummaryResponse>('/api/compare/ai-summary/', { ids: ids.join(',') }),
 }

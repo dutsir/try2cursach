@@ -12,15 +12,9 @@ const SOURCE_LABELS: Record<string, string> = {
   wb:       'Wildberries',
 }
 
-/**
- * Sidebar с фильтрами каталога. Подгружает фасеты из API:
- * /api/categories/<slug>/facets/ — но только если выбрана категория.
- * Без категории — показывает только базовые фильтры (источники, наличие).
- */
 export function CatalogSidebar() {
   const f = useCatalogFilters()
 
-  // Фасеты — только если категория выбрана
   const { data: facets, isLoading: facetsLoading } = useQuery({
     queryKey: ['facets', f.category],
     queryFn: () => f.category ? facetsApi.forCategory(f.category) : null,
@@ -29,13 +23,13 @@ export function CatalogSidebar() {
   })
 
   return (
-    <aside className="sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto border-r border-steam-border bg-steam-card p-4 space-y-5">
+    <aside className="lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto border-b lg:border-b-0 lg:border-r border-scout-subtle bg-scout-bg p-5 space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-steam-light">Фильтры</h3>
+        <h3 className="scout-caption text-scout-text">Фильтры</h3>
         {f.isAnyActive && (
           <button
             onClick={f.resetAll}
-            className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-steam-muted hover:text-steam-blue transition-colors"
+            className="flex items-center gap-1 text-[10px] uppercase tracking-[0.1em] text-scout-dim hover:text-scout-accent transition-colors"
           >
             <X size={10} />
             Сбросить
@@ -43,14 +37,13 @@ export function CatalogSidebar() {
         )}
       </div>
 
-      {/* Бренды (только при выбранной категории) */}
       {f.category && (
         <section>
-          <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-steam-muted">
+          <h4 className="mb-2.5 scout-caption">
             Бренды {facets && `(${facets.brands.length})`}
           </h4>
           {facetsLoading ? (
-            <div className="text-xs text-steam-muted">Загрузка…</div>
+            <div className="text-xs text-scout-dim">Загрузка…</div>
           ) : facets?.brands.length ? (
             <BrandMultiSelect
               options={facets.brands}
@@ -58,17 +51,14 @@ export function CatalogSidebar() {
               onToggle={(name) => f.toggleArrayValue('brands', name)}
             />
           ) : (
-            <div className="text-xs text-steam-muted">Нет брендов</div>
+            <div className="text-xs text-scout-dim">Нет брендов</div>
           )}
         </section>
       )}
 
-      {/* Цена */}
       {f.category && facets?.price_range && facets.price_range.max > facets.price_range.min && (
         <section>
-          <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-steam-muted">
-            Цена, ₽
-          </h4>
+          <h4 className="mb-2.5 scout-caption">Цена, ₽</h4>
           <PriceRangeSlider
             min={facets.price_range.min}
             max={facets.price_range.max}
@@ -81,11 +71,8 @@ export function CatalogSidebar() {
         </section>
       )}
 
-      {/* Магазин */}
       <section>
-        <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-steam-muted">
-          Магазин
-        </h4>
+        <h4 className="mb-2.5 scout-caption">Магазин</h4>
         <div className="space-y-1">
           {(facets?.sources || [
             { code: 'dns', count: 0 },
@@ -95,41 +82,40 @@ export function CatalogSidebar() {
           ]).map(s => (
             <label
               key={s.code}
-              className="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-steam-darker"
+              className="flex cursor-pointer items-center justify-between gap-2 rounded-scout px-2 py-1.5 hover:bg-scout-subtle/60 transition-colors"
             >
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-2.5">
                 <input
                   type="checkbox"
                   checked={f.sources.includes(s.code)}
                   onChange={() => f.toggleArrayValue('sources', s.code)}
-                  className="h-3.5 w-3.5 accent-steam-blue"
+                  className="h-3.5 w-3.5 accent-scout-accent"
                 />
-                <span className="text-xs text-steam-light">{SOURCE_LABELS[s.code] || s.code}</span>
+                <span className="text-xs text-scout-text">{SOURCE_LABELS[s.code] || s.code}</span>
               </span>
               {s.count > 0 && (
-                <span className="text-[10px] text-steam-muted">{s.count}</span>
+                <span className="text-[10px] text-scout-dim scout-tabnums">{s.count}</span>
               )}
             </label>
           ))}
         </div>
       </section>
 
-      {/* В наличии */}
       <section>
-        <label className="flex cursor-pointer items-center justify-between gap-2">
-          <span className="text-xs text-steam-light">Только в наличии</span>
+        <label className="flex cursor-pointer items-center justify-between gap-2 rounded-scout px-2 py-1.5 hover:bg-scout-subtle/60 transition-colors">
+          <span className="text-xs text-scout-text">Только в наличии</span>
           <input
             type="checkbox"
             checked={f.inStock}
             onChange={e => f.setFilter('inStock', e.target.checked)}
-            className="h-4 w-4 accent-steam-blue"
+            className="h-4 w-4 accent-scout-accent"
           />
         </label>
       </section>
 
       {facets && (
-        <div className="pt-3 border-t border-steam-border text-[10px] text-steam-muted">
-          Всего в категории: {facets.total_products.toLocaleString('ru-RU')} товаров
+        <div className="pt-4 border-t border-scout-subtle text-[10px] text-scout-dim">
+          Всего в категории: <span className="scout-tabnums text-scout-muted">{facets.total_products.toLocaleString('ru-RU')}</span> товаров
         </div>
       )}
     </aside>

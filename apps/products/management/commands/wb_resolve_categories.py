@@ -36,6 +36,10 @@ WB_CATEGORY_NAME_MAP = {
     'zhestkie-diski-35': 'Жесткие диски',
     'bloki-pitaniya': 'Блоки питания',
     'korpusa': 'Корпуса',
+    # === Периферия и ноутбуки ===
+    'noutbuki': 'Ноутбуки',
+    'klaviatury': 'Клавиатуры',
+    'myshi': 'Мыши',
 }
 
 

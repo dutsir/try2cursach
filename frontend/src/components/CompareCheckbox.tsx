@@ -8,10 +8,6 @@ interface Props {
   className?: string
 }
 
-/**
- * Кнопка-чекбокс «В сравнение» для карточки товара.
- * При попытке добавить 5-й — toast «Максимум 4».
- */
 export function CompareCheckbox({ productId, className }: Props) {
   const isSelected = useCompareStore(s => s.ids.includes(productId))
   const toggle = useCompareStore(s => s.toggle)
@@ -31,12 +27,12 @@ export function CompareCheckbox({ productId, className }: Props) {
       onClick={onClick}
       title={isSelected ? 'Убрать из сравнения' : 'Добавить к сравнению'}
       className={cn(
-        'p-1.5 rounded-steam transition-colors hover:bg-steam-panel',
-        isSelected ? 'text-steam-blue' : 'text-steam-muted',
+        'p-1.5 rounded-scout transition-colors hover:bg-scout-subtle',
+        isSelected ? 'text-scout-accent' : 'text-scout-dim',
         className,
       )}
     >
-      <GitCompare size={14} className={isSelected ? 'fill-steam-blue/30' : ''} />
+      <GitCompare size={14} className={isSelected ? 'fill-scout-accent/30' : ''} />
     </button>
   )
 }

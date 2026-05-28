@@ -418,6 +418,54 @@ def task_parse_wb_category(self, category_id: int) -> dict:
         return parse_wb_category_with_parser(category, parser)
 
 
+def parse_regard_category_with_parser(
+    category: Category,
+    parser: Any,
+    *,
+    sync: bool = False,
+) -> dict:
+    """Парсинг категории Регард (через JSON API)."""
+    regard_path = category.store_path(PriceHistory.Source.REGARD.value)
+    if not regard_path:
+        logger.warning(
+            'Категория %s: нет активной привязки Регард (CategoryListing)',
+            category.slug,
+        )
+        return {'status': 'skipped', 'category': category.slug, 'reason': 'no_regard_listing'}
+
+    def _do() -> list:
+        return parser.parse_category(regard_path) or []
+
+    return _run_with_instrumentation(
+        category=category,
+        source=PriceHistory.Source.REGARD.value,
+        sync=sync,
+        parse_fn=_do,
+        log_label='Парсинг Регард',
+    )
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=30,
+    retry_backoff_max=300,
+    max_retries=3,
+    acks_late=True,
+)
+def task_parse_regard_category(self, category_id: int) -> dict:
+    from .regard_parser import RegardParser
+
+    try:
+        category = Category.objects.get(pk=category_id, is_active=True)
+    except Category.DoesNotExist:
+        logger.warning('Категория id=%d не найдена или неактивна', category_id)
+        return {'status': 'skipped', 'reason': 'category_not_found'}
+
+    with RegardParser() as parser:
+        return parse_regard_category_with_parser(category, parser)
+
+
 @shared_task(
     bind=True,
     autoretry_for=(Exception,),

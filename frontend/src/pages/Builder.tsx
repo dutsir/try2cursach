@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import {
-  Cpu, CircuitBoard, Monitor, MemoryStick, Plug, Box, HardDrive,
-  X,
+  Cpu, CircuitBoard, Monitor, MemoryStick, Plug, Box, HardDrive, X,
 } from 'lucide-react'
 import { useBuildStore, type SlotKey } from '@/store/build'
 import { BuilderSlotPicker } from '@/components/BuilderSlotPicker'
@@ -37,65 +36,92 @@ export default function Builder() {
   const filled = useBuildStore(s => s.filledCount())
 
   const [picking, setPicking] = useState<SlotConfig | null>(null)
+  const progressPct = (filled / PC_SLOTS.length) * 100
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between gap-3 flex-wrap">
+    <div className="animate-scout-rise space-y-6 pb-24">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white">Конструктор ПК</h1>
-          <p className="text-sm text-steam-muted mt-1">
-            Выбирай компоненты — мы посчитаем суммарную цену в реальном времени.
+          <div className="scout-caption">build your pc</div>
+          <h1 className="mt-2 font-display text-[40px] font-bold tracking-[-0.02em] lowercase text-scout-text">
+            конструктор пк.
+          </h1>
+          <p className="mt-2 text-sm text-scout-muted max-w-[560px]">
+            выбирай компоненты — мы посчитаем суммарную цену в реальном времени. сборка сохраняется автоматически в браузере.
           </p>
         </div>
         {filled > 0 && (
           <button
             onClick={clearAll}
-            className="text-xs uppercase tracking-wider text-steam-muted hover:text-red-500 flex items-center gap-1"
+            className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.1em] text-scout-dim hover:text-scout-danger transition-colors"
           >
-            <X size={12} /> Очистить сборку
+            <X size={12} /> очистить сборку
           </button>
         )}
       </div>
 
-      <div className="rounded-steam border border-steam-border bg-steam-card divide-y divide-steam-border">
+      {/* Progress strip */}
+      <div className="flex items-center gap-4 p-4 rounded-scout-lg bg-scout-elevated border border-scout-subtle">
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-2">
+            <span className="scout-caption">прогресс сборки</span>
+            <span className="text-xs text-scout-muted scout-tabnums">
+              {filled} / {PC_SLOTS.length}
+            </span>
+          </div>
+          <div className="h-1 bg-scout-subtle rounded-full overflow-hidden">
+            <div
+              className="h-full bg-scout-accent transition-all duration-500"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Slots */}
+      <div className="rounded-scout-lg border border-scout-subtle bg-scout-elevated divide-y divide-scout-subtle overflow-hidden">
         {PC_SLOTS.map(slot => {
           const Icon = slot.icon
           const item = slots[slot.key]
           return (
-            <div key={slot.key} className="flex items-center gap-3 p-3">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-steam bg-steam-darker">
-                <Icon size={20} className="text-steam-blue" />
+            <div key={slot.key} className="flex items-center gap-4 p-4 transition-colors hover:bg-scout-subtle/30">
+              <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-scout border ${
+                item ? 'bg-scout-accent/10 border-scout-accent/30' : 'bg-scout-bg border-scout-subtle'
+              }`}>
+                <Icon size={20} className={item ? 'text-scout-accent' : 'text-scout-dim'} />
               </div>
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs uppercase tracking-wider text-steam-muted">{slot.label}</span>
-                  {slot.optional && <span className="text-[9px] text-steam-muted">(опционально)</span>}
+                  <span className="text-[11px] uppercase tracking-[0.1em] text-scout-dim">{slot.label}</span>
+                  {slot.optional && (
+                    <span className="text-[9px] uppercase tracking-[0.08em] text-scout-dim">(опционально)</span>
+                  )}
                 </div>
                 {item ? (
-                  <Link to={`/products/${item.productId}`} className="block text-sm text-steam-light hover:text-steam-blue mt-1 line-clamp-1">
-                    {item.brand && <span className="font-semibold uppercase mr-1">{item.brand}</span>}
+                  <Link to={`/products/${item.productId}`} className="block text-[14px] text-scout-text hover:text-scout-accent mt-1 line-clamp-1 transition-colors">
+                    {item.brand && <span className="font-semibold uppercase mr-1.5 text-scout-muted">{item.brand}</span>}
                     {item.name}
                   </Link>
                 ) : (
-                  <div className="text-sm text-steam-muted mt-1">Не выбрано</div>
+                  <div className="text-[13px] text-scout-dim mt-1">Не выбрано</div>
                 )}
               </div>
 
               {item ? (
                 <>
                   <div className="text-right shrink-0">
-                    <div className="text-sm font-bold text-steam-green">{formatPrice(item.price)}</div>
+                    <div className="text-sm font-bold text-scout-accent scout-tabnums">{formatPrice(item.price)}</div>
                   </div>
                   <button
                     onClick={() => setPicking(slot)}
-                    className="rounded-steam border border-steam-border px-3 py-1.5 text-[10px] uppercase tracking-wider text-steam-muted hover:border-steam-blue hover:text-steam-blue"
+                    className="scout-btn-ghost h-8 text-[11px] px-3"
                   >
-                    Заменить
+                    заменить
                   </button>
                   <button
                     onClick={() => clearSlot(slot.key)}
-                    className="p-1.5 text-steam-muted hover:text-red-500"
+                    className="p-1.5 text-scout-dim hover:text-scout-danger transition-colors"
                     title="Удалить из сборки"
                   >
                     <X size={14} />
@@ -104,9 +130,9 @@ export default function Builder() {
               ) : (
                 <button
                   onClick={() => setPicking(slot)}
-                  className="rounded-steam bg-steam-blue px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-steam-darker hover:bg-steam-blue/90"
+                  className="scout-btn-primary h-8 text-[11px] px-4"
                 >
-                  Выбрать
+                  выбрать
                 </button>
               )}
             </div>
@@ -114,15 +140,20 @@ export default function Builder() {
         })}
       </div>
 
-      <div className="sticky bottom-0 z-20 -mx-4 lg:mx-0 border-t border-steam-border bg-steam-darker p-4">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
-          <div className="flex flex-col">
-            <span className="text-[10px] uppercase tracking-wider text-steam-muted">Итого</span>
-            <span className="text-2xl font-bold text-steam-light">{formatPrice(total)}</span>
-            <span className="text-[10px] text-steam-muted">{filled} из {PC_SLOTS.length} компонентов</span>
+      {/* Sticky total */}
+      <div className="sticky bottom-0 z-20 -mx-6 lg:-mx-10 border-t border-scout-subtle bg-scout-elevated/95 backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 lg:px-10 py-4">
+          <div>
+            <div className="scout-caption">итого</div>
+            <div className="mt-1 font-display text-[32px] font-bold tracking-[-0.02em] text-scout-text scout-tabnums leading-none">
+              {formatPrice(total)}
+            </div>
+            <div className="mt-1 text-[11px] text-scout-muted">
+              {filled} из {PC_SLOTS.length} компонентов
+            </div>
           </div>
-          <div className="text-right text-[10px] text-steam-muted max-w-[200px]">
-            Сборка сохраняется автоматически (в браузере). Проверка совместимости — в следующей версии.
+          <div className="text-right text-[10px] text-scout-dim max-w-[260px]">
+            сборка сохраняется автоматически в браузере. проверка совместимости — в следующей версии.
           </div>
         </div>
       </div>

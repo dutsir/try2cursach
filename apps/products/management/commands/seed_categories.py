@@ -160,6 +160,21 @@ BUILTIN_CATEGORIES: list[dict[str, str]] = [
         'slug': 'servernye-operacionnye-sistemy',
         'dns_category_slug': '62c92d5946d337c4/servernye-operacionnye-sistemy',
     },
+    {
+        'name': 'Ноутбуки',
+        'slug': 'noutbuki',
+        'dns_category_slug': '',
+    },
+    {
+        'name': 'Клавиатуры',
+        'slug': 'klaviatury',
+        'dns_category_slug': '',
+    },
+    {
+        'name': 'Мыши',
+        'slug': 'myshi',
+        'dns_category_slug': '',
+    },
 ]
 
 
@@ -215,7 +230,7 @@ class Command(BaseCommand):
             slug = row['slug'].strip()
             name = row['name'].strip()
             dns = row['dns_category_slug'].strip().strip('/')
-            if not slug or not name or not dns:
+            if not slug or not name:
                 raise CommandError(f'Пустое поле в записи: {row!r}')
 
             exists = Category.objects.filter(slug=slug).first()
@@ -228,11 +243,12 @@ class Command(BaseCommand):
                         slug=slug,
                         is_active=True,
                     )
-                    CategoryListing.objects.update_or_create(
-                        category=cat,
-                        source=CategoryListing.Source.DNS,
-                        defaults={'external_path': dns, 'is_active': True},
-                    )
+                    if dns:
+                        CategoryListing.objects.update_or_create(
+                            category=cat,
+                            source=CategoryListing.Source.DNS,
+                            defaults={'external_path': dns, 'is_active': True},
+                        )
                 created_n += 1
                 continue
 
@@ -244,11 +260,12 @@ class Command(BaseCommand):
                         name=name,
                         is_active=True,
                     )
-                    CategoryListing.objects.update_or_create(
-                        category=exists,
-                        source=CategoryListing.Source.DNS,
-                        defaults={'external_path': dns, 'is_active': True},
-                    )
+                    if dns:
+                        CategoryListing.objects.update_or_create(
+                            category=exists,
+                            source=CategoryListing.Source.DNS,
+                            defaults={'external_path': dns, 'is_active': True},
+                        )
                 updated_n += 1
             else:
                 skipped_n += 1

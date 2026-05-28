@@ -5,9 +5,27 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Motiva Sans"', '"Noto Sans"', 'Inter', 'sans-serif'],
+        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['"Cabinet Grotesk"', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       colors: {
+        scout: {
+          bg:        '#0A0A0A',
+          elevated:  '#141414',
+          subtle:    '#1C1C1C',
+          hover:     '#262626',
+          border:    '#2E2E2E',
+          'border-soft': '#1C1C1C',
+          text:      '#F5F5F5',
+          muted:     '#A3A3A3',
+          dim:       '#666666',
+          accent:    '#A855F7',
+          'accent-hover': '#9333EA',
+          success:   '#10B981',
+          warning:   '#F59E0B',
+          danger:    '#EF4444',
+        },
         steam: {
           bg:      '#1b2838',
           darker:  '#16202d',
@@ -23,6 +41,7 @@ export default {
           green:   '#a4d007',
           greenHi: '#b9e02e',
           orange:  '#dba84e',
+          yellow:  '#dba84e',
         },
         brand: {
           50:  '#e8f4fb',
@@ -41,14 +60,31 @@ export default {
       borderRadius: {
         steam: '2px',
         'steam-lg': '4px',
+        scout: '4px',
+        'scout-lg': '6px',
+        'scout-xl': '8px',
+      },
+      letterSpacing: {
+        'scout-tight': '-0.035em',
+        'scout-display': '-0.03em',
+        'scout-h3': '-0.02em',
+        'scout-caption': '0.12em',
+      },
+      transitionTimingFunction: {
+        scout: 'cubic-bezier(0.16, 1, 0.3, 1)',
       },
       animation: {
         'fade-in': 'fadeIn 0.15s linear',
+        'scout-rise': 'scoutRise 600ms cubic-bezier(0.16, 1, 0.3, 1) both',
       },
       keyframes: {
         fadeIn: {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
+        },
+        scoutRise: {
+          '0%': { opacity: '0', transform: 'translateY(24px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
       },
     },

@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import (
     BooleanField, Count, DecimalField, Exists, ExpressionWrapper, F,
@@ -18,6 +20,8 @@ from apps.core.models import User
 from apps.prices.models import PriceHistory
 from apps.prices.stats import compute_product_price_stats
 from apps.products.models import Category, Offer, Product, ProductFamily
+
+logger = logging.getLogger(__name__)
 
 from .serializers import (
     CategoryMinimalSerializer,
@@ -411,24 +415,158 @@ class DashboardView(APIView):
         })
 
 
+def _build_compare_data(ids: list[int]) -> list[dict]:
+    """Собирает данные товаров для сравнения. Используется CompareView и AICompareSummaryView."""
+    from datetime import timedelta
+    from django.utils import timezone
+
+    products = (
+        Product.objects
+        .filter(id__in=ids, is_active=True)
+        .select_related('category')
+        .prefetch_related('offers')
+    )
+
+    # Сохраняем порядок как в URL
+    by_id = {p.id: p for p in products}
+    ordered = [by_id[i] for i in ids if i in by_id]
+
+    result = []
+    all_ratings = []
+
+    for p in ordered:
+        offers = list(p.offers.all())
+        offers_by_source = {}
+        best_offer = None
+        best_price = None
+
+        for o in offers:
+            last = (
+                PriceHistory.objects
+                .filter(offer=o, is_actual=True)
+                .order_by('-timestamp')
+                .first()
+            )
+            if last and last.price:
+                offers_by_source[o.source] = {
+                    'price': str(last.price),
+                    'old_price': str(last.old_price) if last.old_price else None,
+                    'source_display': o.get_source_display(),
+                    'url': o.url,
+                    'image_url': o.image_url or p.image_url or '',
+                    'is_available': o.is_available,
+                    'rating': o.extra_metadata.get('supplier_rating') if o.extra_metadata else None,
+                    'reviews_count': o.extra_metadata.get('reviews_count') if o.extra_metadata else None,
+                }
+
+                if best_price is None or last.price < best_price:
+                    best_price = last.price
+                    best_offer = (o, last)
+
+        price_trend = None
+        if best_offer:
+            o, last = best_offer
+            thirty_days_ago = timezone.now() - timedelta(days=30)
+            old_price_record = (
+                PriceHistory.objects
+                .filter(offer=o, timestamp__lte=thirty_days_ago)
+                .order_by('-timestamp')
+                .first()
+            )
+            if old_price_record and old_price_record.price:
+                delta = float(last.price - old_price_record.price)
+                delta_pct = (delta / float(old_price_record.price) * 100) if old_price_record.price else 0
+                price_trend = {
+                    'price_30d_ago': str(old_price_record.price),
+                    'delta': str(delta),
+                    'delta_pct': round(delta_pct, 1),
+                }
+
+        specs_dict = {}
+        if p.variant_specs:
+            specs_dict.update(p.variant_specs)
+        if best_offer:
+            o, _ = best_offer
+            if o.normalized_features:
+                specs_dict.update(o.normalized_features)
+            if o.extra_metadata:
+                for k, v in o.extra_metadata.items():
+                    if k not in ['rating', 'supplier_rating', 'reviews_count', 'sale_percent', 'cashback_percent', 'supplier']:
+                        specs_dict[k] = v
+
+        stats = {}
+        if best_offer:
+            o, _ = best_offer
+            if o.extra_metadata:
+                meta = o.extra_metadata
+                stats = {
+                    'rating': meta.get('rating'),
+                    'reviews_count': meta.get('reviews_count'),
+                    'sale_percent': meta.get('sale_percent'),
+                    'cashback_percent': meta.get('cashback_percent'),
+                    'supplier': meta.get('supplier'),
+                    'supplier_rating': meta.get('supplier_rating'),
+                }
+                if stats.get('rating'):
+                    all_ratings.append(float(stats['rating']))
+
+        best_info = None
+        if best_offer:
+            o, last = best_offer
+            best_info = {
+                'price': str(last.price),
+                'old_price': str(last.old_price) if last.old_price else None,
+                'source': o.source,
+                'source_display': o.get_source_display(),
+                'url': o.url,
+                'image_url': o.image_url or p.image_url or '',
+            }
+
+        result.append({
+            'id': p.id,
+            'name': p.name,
+            'slug': p.slug,
+            'brand': p.brand,
+            'category': {'id': p.category.id, 'slug': p.category.slug, 'name': p.category.name} if p.category else None,
+            'image_url': p.image_url or '',
+            'best_offer': best_info,
+            'offers_by_source': offers_by_source,
+            'price_trend': price_trend,
+            'stats': stats,
+            'specs': specs_dict,
+            'offers_count': len(offers),
+        })
+
+    max_rating = max(all_ratings) if all_ratings else 5.0
+    prices_only = [float(item['best_offer']['price']) for item in result if item['best_offer']]
+    min_price = min(prices_only) if prices_only else 0
+    max_price = max(prices_only) if prices_only else 0
+
+    for item in result:
+        if item['best_offer']:
+            price = float(item['best_offer']['price'])
+            rating = item['stats'].get('rating')
+            cashback = item['stats'].get('cashback_percent', 0) or 0
+            discount = item['stats'].get('sale_percent', 0) or 0
+
+            price_norm = 1 - ((price - min_price) / (max_price - min_price)) if max_price > min_price else 0.5
+            rating_norm = (float(rating) / max_rating) if rating else 0
+            benefit_norm = (float(cashback) + float(discount)) / 100.0
+
+            value_score = (rating_norm * 0.4) + (price_norm * 0.4) + (benefit_norm * 0.2)
+            item['value_score'] = round(value_score * 100, 1)
+        else:
+            item['value_score'] = 0
+
+    return result
+
+
 class CompareView(APIView):
-    """Сравнение нескольких товаров (до 4) — для страницы /compare.
-
-    URL: /api/compare/?ids=1,2,3,4
-
-    Возвращает товары с полной информацией для сравнения:
-    - все офферы по источникам с ценами
-    - ценовой тренд (30d)
-    - рейтинг, отзывы, скидки, кэшбек
-    - value_score (качество-цена)
-    """
+    """Сравнение товаров для страницы /compare."""
 
     permission_classes = [permissions.AllowAny]
 
     def get(self, request: Request) -> Response:
-        from datetime import timedelta
-        from django.utils import timezone
-
         ids_param = request.query_params.get('ids', '')
         try:
             ids = [int(x.strip()) for x in ids_param.split(',') if x.strip()]
@@ -439,150 +577,58 @@ class CompareView(APIView):
         if len(ids) > 4:
             return Response({'error': 'maximum 4 products'}, status=400)
 
-        products = (
-            Product.objects
-            .filter(id__in=ids, is_active=True)
-            .select_related('category')
-            .prefetch_related('offers')
-        )
-
-        # Сохраняем порядок как в URL
-        by_id = {p.id: p for p in products}
-        ordered = [by_id[i] for i in ids if i in by_id]
-
-        result = []
-        all_ratings = []
-
-        for p in ordered:
-            # Все офферы с ценами и метаданными
-            offers = list(p.offers.all())
-            offers_by_source = {}
-            best_offer = None
-            best_price = None
-
-            for o in offers:
-                last = (
-                    PriceHistory.objects
-                    .filter(offer=o, is_actual=True)
-                    .order_by('-timestamp')
-                    .first()
-                )
-                if last and last.price:
-                    offers_by_source[o.source] = {
-                        'price': str(last.price),
-                        'old_price': str(last.old_price) if last.old_price else None,
-                        'source_display': o.get_source_display(),
-                        'url': o.url,
-                        'image_url': o.image_url or p.image_url or '',
-                        'is_available': o.is_available,
-                        'rating': o.extra_metadata.get('supplier_rating') if o.extra_metadata else None,
-                        'reviews_count': o.extra_metadata.get('reviews_count') if o.extra_metadata else None,
-                    }
-
-                    if best_price is None or last.price < best_price:
-                        best_price = last.price
-                        best_offer = (o, last)
-
-            # Ценовой тренд (30 дней назад)
-            price_trend = None
-            if best_offer:
-                o, last = best_offer
-                thirty_days_ago = timezone.now() - timedelta(days=30)
-                old_price_record = (
-                    PriceHistory.objects
-                    .filter(offer=o, timestamp__lte=thirty_days_ago)
-                    .order_by('-timestamp')
-                    .first()
-                )
-                if old_price_record and old_price_record.price:
-                    delta = float(last.price - old_price_record.price)
-                    delta_pct = (delta / float(old_price_record.price) * 100) if old_price_record.price else 0
-                    price_trend = {
-                        'price_30d_ago': str(old_price_record.price),
-                        'delta': str(delta),
-                        'delta_pct': round(delta_pct, 1),
-                    }
-
-            # Объединённые specs с группировкой
-            specs_dict = {}
-            if p.variant_specs:
-                specs_dict.update(p.variant_specs)
-            if best_offer:
-                o, _ = best_offer
-                if o.normalized_features:
-                    specs_dict.update(o.normalized_features)
-                if o.extra_metadata:
-                    # Отфильтруем metadata-only поля для specs
-                    for k, v in o.extra_metadata.items():
-                        if k not in ['rating', 'supplier_rating', 'reviews_count', 'sale_percent', 'cashback_percent', 'supplier']:
-                            specs_dict[k] = v
-
-            # Статистика качества из best_offer
-            stats = {}
-            if best_offer:
-                o, _ = best_offer
-                if o.extra_metadata:
-                    meta = o.extra_metadata
-                    stats = {
-                        'rating': meta.get('rating'),
-                        'reviews_count': meta.get('reviews_count'),
-                        'sale_percent': meta.get('sale_percent'),
-                        'cashback_percent': meta.get('cashback_percent'),
-                        'supplier': meta.get('supplier'),
-                        'supplier_rating': meta.get('supplier_rating'),
-                    }
-                    if stats.get('rating'):
-                        all_ratings.append(float(stats['rating']))
-
-            best_info = None
-            if best_offer:
-                o, last = best_offer
-                best_info = {
-                    'price': str(last.price),
-                    'old_price': str(last.old_price) if last.old_price else None,
-                    'source': o.source,
-                    'source_display': o.get_source_display(),
-                    'url': o.url,
-                    'image_url': o.image_url or p.image_url or '',
-                }
-
-            result.append({
-                'id': p.id,
-                'name': p.name,
-                'slug': p.slug,
-                'brand': p.brand,
-                'category': {'id': p.category.id, 'slug': p.category.slug, 'name': p.category.name} if p.category else None,
-                'image_url': p.image_url or '',
-                'best_offer': best_info,
-                'offers_by_source': offers_by_source,
-                'price_trend': price_trend,
-                'stats': stats,
-                'specs': specs_dict,
-                'offers_count': len(offers),
-            })
-
-        # Расчитываем value_score для каждого товара
-        max_rating = max(all_ratings) if all_ratings else 5.0
-        min_price = min(float(item['best_offer']['price']) for item in result if item['best_offer'])
-        max_price = max(float(item['best_offer']['price']) for item in result if item['best_offer'])
-
-        for item in result:
-            if item['best_offer']:
-                price = float(item['best_offer']['price'])
-                rating = item['stats'].get('rating')
-                cashback = item['stats'].get('cashback_percent', 0) or 0
-                discount = item['stats'].get('sale_percent', 0) or 0
-
-                price_norm = 1 - ((price - min_price) / (max_price - min_price)) if max_price > min_price else 0.5
-                rating_norm = (float(rating) / max_rating) if rating else 0
-                benefit_norm = (float(cashback) + float(discount)) / 100.0
-
-                value_score = (rating_norm * 0.4) + (price_norm * 0.4) + (benefit_norm * 0.2)
-                item['value_score'] = round(value_score * 100, 1)
-            else:
-                item['value_score'] = 0
-
+        result = _build_compare_data(ids)
         return Response(result)
+
+
+class AICompareSummaryView(APIView):
+    """AI-генерация краткого вердикта (3-5 предложений) для сравниваемых товаров.
+
+    Использует Google Gemini, кэширует результат в Redis на 24ч.
+    Rate limit: 10 запросов в минуту на IP.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request: Request) -> Response:
+        from apps.analytics.ai_compare import generate_compare_summary, AIServiceError
+        from django.core.cache import cache
+
+        ids_param = request.query_params.get('ids', '')
+        try:
+            ids = [int(x.strip()) for x in ids_param.split(',') if x.strip()]
+        except ValueError:
+            return Response({'error': 'ids must be comma-separated integers'}, status=400)
+        if not ids or len(ids) < 2:
+            return Response({'error': 'нужно минимум 2 товара'}, status=400)
+        if len(ids) > 4:
+            return Response({'error': 'максимум 4 товара'}, status=400)
+
+        # Rate limiting: 10 запросов в минуту на IP
+        client_ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', 'unknown'))
+        if client_ip and ',' in client_ip:
+            client_ip = client_ip.split(',')[0].strip()
+        rate_key = f'ai_compare_rate:{client_ip}'
+        count = cache.get(rate_key, 0)
+        if count >= 10:
+            return Response(
+                {'error': 'Превышен лимит запросов (10/мин). Подожди немного.'},
+                status=429,
+            )
+        cache.set(rate_key, count + 1, timeout=60)
+
+        items = _build_compare_data(ids)
+        if len(items) < 2:
+            return Response({'error': 'товары не найдены'}, status=404)
+
+        try:
+            data = generate_compare_summary(items)
+            return Response(data)
+        except AIServiceError as exc:
+            return Response({'error': str(exc)}, status=503)
+        except Exception as exc:
+            logger.exception('AI compare unexpected error')
+            return Response({'error': 'Неожиданная ошибка генерации'}, status=500)
 
 
 class OfferViewSet(viewsets.ReadOnlyModelViewSet):

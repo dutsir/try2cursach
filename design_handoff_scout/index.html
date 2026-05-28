@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Scout — Price Monitor / Hi-fi prototype</title>
+
+<!-- fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@400,500,700&display=swap" rel="stylesheet"/>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; font-family: Inter, system-ui, sans-serif; }
+  /* the design_canvas hosts dark artboards on a warm gray canvas — keep this contrast */
+  * { box-sizing: border-box; }
+
+  /* killing scrollbars inside artboards specifically */
+  .dc-card * { scrollbar-width: thin; scrollbar-color: #2E2E2E transparent; }
+  .dc-card *::-webkit-scrollbar { width: 6px; height: 6px; }
+  .dc-card *::-webkit-scrollbar-thumb { background: #2E2E2E; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<!-- React -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- design canvas -->
+<script type="text/babel" src="design-canvas.jsx"></script>
+
+<!-- shared utilities (Scout mascot, charts, badges) -->
+<script type="text/babel" src="shared.jsx"></script>
+
+<!-- screens -->
+<script type="text/babel" src="screen-landing.jsx"></script>
+<script type="text/babel" src="screen-dashboard.jsx"></script>
+<script type="text/babel" src="screen-product.jsx"></script>
+<script type="text/babel" src="screen-rest.jsx"></script>
+
+<script type="text/babel">
+const { useState } = React;
+
+function App() {
+  // for dashboard → product navigation inside the artboard
+  return (
+    <DesignCanvas>
+      <DCSection id="marketing" title="Marketing" subtitle="The cinematic landing — 8 sections, vertical narrative">
+        <DCArtboard id="landing" label="01 · Landing page" width={1440} height={6900}>
+          <Landing />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="app-core" title="Core app" subtitle="The actual product after sign-in. Russian copy, dark dashboard.">
+        <DCArtboard id="dashboard" label="02 · Dashboard · shelf grid" width={1440} height={1320}>
+          <Dashboard />
+        </DCArtboard>
+        <DCArtboard id="dashboard-empty" label="02b · Dashboard · empty state" width={1440} height={1100}>
+          <Dashboard empty />
+        </DCArtboard>
+        <DCArtboard id="product" label="03 · Product detail · chart + verdict" width={1440} height={1800}>
+          <ProductDetail />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="curate" title="Curate & configure" subtitle="Saved items, add flow, settings">
+        <DCArtboard id="wishlist" label="04 · Wishlist · compact list" width={1440} height={1100}>
+          <Wishlist />
+        </DCArtboard>
+        <DCArtboard id="wishlist-empty" label="04b · Wishlist · empty state" width={1440} height={1100}>
+          <Wishlist empty />
+        </DCArtboard>
+        <DCArtboard id="add-modal" label="05 · Add product modal" width={1440} height={1100}>
+          <Dashboard withModal />
+        </DCArtboard>
+        <DCArtboard id="settings" label="06 · Settings · notifications" width={1440} height={1300}>
+          <Settings />
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>

@@ -16,11 +16,11 @@ import { useCatalogFilters } from '@/hooks/useCatalogFilters'
 import type { Product, PaginatedResponse } from '@/types'
 
 const ORDERINGS = [
-  { value: '',           label: 'По умолчанию' },
-  { value: 'min_price',  label: 'Дешевле сначала' },
-  { value: '-min_price', label: 'Дороже сначала' },
-  { value: 'name',       label: 'Название А–Я' },
-  { value: '-name',      label: 'Название Я–А' },
+  { value: '',            label: 'По умолчанию' },
+  { value: 'min_price',   label: 'Дешевле сначала' },
+  { value: '-min_price',  label: 'Дороже сначала' },
+  { value: 'name',        label: 'Название А–Я' },
+  { value: '-name',       label: 'Название Я–А' },
   { value: '-created_at', label: 'Новинки' },
 ]
 
@@ -32,7 +32,6 @@ export default function Catalog() {
   const [subscribeTarget, setSubscribeTarget] = useState<Product | null>(null)
   const debouncedSearch = useDebounce(searchLocal, 400)
 
-  // Синхронизация локального search с URL
   useEffect(() => {
     if (debouncedSearch !== f.search) {
       f.setFilter('search', debouncedSearch)
@@ -80,30 +79,34 @@ export default function Catalog() {
   })
   const wishlistMap = new Map(wishlist?.items.map(i => [i.product.id, i.id]) ?? [])
 
-  // Auto-fetch при появлении sentinel в viewport
   const { ref: sentinelRef, inView } = useInView({ rootMargin: '600px' })
   useEffect(() => {
     if (inView && hasNextPage && !isFetchingNextPage) fetchNextPage()
   }, [inView, hasNextPage, isFetchingNextPage, fetchNextPage])
 
   return (
-    <div className="grid grid-cols-1 gap-0 lg:grid-cols-[260px_1fr] -mx-4">
+    <div className="animate-scout-rise grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-0 -mx-6 lg:-mx-10 -my-8">
       <CatalogSidebar />
 
-      <main className="px-4 lg:px-6 py-4 min-w-0">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <h1 className="text-xl font-bold text-white">Каталог</h1>
-          {total > 0 && (
-            <span className="text-xs text-steam-muted">
-              Найдено: <span className="text-steam-light">{total.toLocaleString('ru-RU')}</span>
-            </span>
-          )}
+      <main className="px-6 lg:px-8 py-8 min-w-0 pb-32">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="scout-caption">catalog</div>
+            <h1 className="mt-2 font-display text-[40px] font-bold tracking-[-0.02em] lowercase text-scout-text">
+              каталог
+            </h1>
+            {total > 0 && (
+              <p className="mt-1 text-sm text-scout-muted">
+                найдено <span className="text-scout-text scout-tabnums">{total.toLocaleString('ru-RU')}</span> товаров
+              </p>
+            )}
+          </div>
 
-          <div className="ml-auto flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <select
               value={f.category}
               onChange={e => f.setFilter('category', e.target.value)}
-              className="rounded-steam border border-steam-border bg-steam-darker px-3 py-2 text-sm text-steam-light focus:border-steam-blue focus:outline-none max-w-[220px]"
+              className="rounded-scout border border-scout-subtle bg-scout-elevated px-3 py-2 text-sm text-scout-text focus:border-scout-accent/60 focus:outline-none max-w-[220px]"
             >
               <option value="">Все категории</option>
               {categories.map(c => (
@@ -114,7 +117,7 @@ export default function Catalog() {
             <select
               value={f.ordering}
               onChange={e => f.setFilter('ordering', e.target.value)}
-              className="rounded-steam border border-steam-border bg-steam-darker px-3 py-2 text-sm text-steam-light focus:border-steam-blue focus:outline-none"
+              className="rounded-scout border border-scout-subtle bg-scout-elevated px-3 py-2 text-sm text-scout-text focus:border-scout-accent/60 focus:outline-none"
             >
               {ORDERINGS.map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -123,10 +126,10 @@ export default function Catalog() {
           </div>
         </div>
 
-        <div className="mb-4">
+        <div className="mb-6">
           <Input
             icon={<Search size={14} />}
-            placeholder="Поиск по названию, бренду, артикулу..."
+            placeholder="Поиск по названию, бренду, артикулу…"
             value={searchLocal}
             onChange={e => setSearchLocal(e.target.value)}
           />
@@ -135,14 +138,14 @@ export default function Catalog() {
         {isLoading ? (
           <div className="flex justify-center py-20"><Spinner /></div>
         ) : products.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-20 text-steam-muted">
-            <Search size={40} strokeWidth={1.5} />
-            <p className="text-base text-steam-light">Ничего не найдено</p>
-            <p className="text-xs">Попробуйте изменить фильтры или сбросить</p>
+          <div className="flex flex-col items-center gap-3 py-24 text-center">
+            <Search size={40} strokeWidth={1.5} className="text-scout-dim" />
+            <p className="text-base text-scout-text">Ничего не найдено</p>
+            <p className="text-xs text-scout-muted">Попробуй изменить фильтры или сбросить</p>
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {products.map((product, i) => (
                 <ProductCard
                   key={product.id}
@@ -155,15 +158,15 @@ export default function Catalog() {
               ))}
             </div>
 
-            <div ref={sentinelRef} className="h-12 flex items-center justify-center">
+            <div ref={sentinelRef} className="h-16 flex items-center justify-center">
               {isFetchingNextPage && (
-                <span className="flex items-center gap-2 text-xs text-steam-muted">
+                <span className="flex items-center gap-2 text-xs text-scout-dim">
                   <Loader2 size={14} className="animate-spin" />
                   Загрузка ещё…
                 </span>
               )}
               {!hasNextPage && products.length > 0 && (
-                <span className="text-xs text-steam-muted">Это всё.</span>
+                <span className="text-xs text-scout-dim">это всё.</span>
               )}
             </div>
           </>
