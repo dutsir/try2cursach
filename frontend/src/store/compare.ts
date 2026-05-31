@@ -4,17 +4,21 @@ import { persist } from 'zustand/middleware'
 const MAX_ITEMS = 4
 
 interface CompareState {
+  ownerId: number | null
   ids: number[]
   add: (id: number) => { ok: boolean; reason?: string }
   remove: (id: number) => void
   toggle: (id: number) => { ok: boolean; reason?: string }
   clear: () => void
   has: (id: number) => boolean
+  /** Привязывает список к юзеру; при смене аккаунта очищает чужой список. */
+  ensureOwner: (userId: number | null) => void
 }
 
 export const useCompareStore = create<CompareState>()(
   persist(
     (set, get) => ({
+      ownerId: null,
       ids: [],
 
       add: (id) => {
@@ -43,10 +47,23 @@ export const useCompareStore = create<CompareState>()(
       clear: () => set({ ids: [] }),
 
       has: (id) => get().ids.includes(id),
+
+      ensureOwner: (userId) => {
+        const cur = get().ownerId
+        if (cur === userId) return
+        // null = список ещё не привязан (старт/гость): присваиваем владельца,
+        // НЕ стирая выбранное. Иначе гонка с initAuth затирала свежий выбор.
+        // Чистим только при реальной смене аккаунта или выходе.
+        if (cur === null) {
+          set({ ownerId: userId })
+          return
+        }
+        set({ ownerId: userId, ids: [] })
+      },
     }),
     {
       name: 'pricewatch:compare',
-      version: 1,
+      version: 2,
     },
   ),
 )

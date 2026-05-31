@@ -23,8 +23,8 @@ export function useToast() {
 }
 
 const icons: Record<ToastType, ReactNode> = {
-  success: <CheckCircle size={16} className="text-emerald-400" />,
-  error:   <AlertCircle size={16} className="text-red-400" />,
+  success: <CheckCircle size={16} className="text-scout-success" />,
+  error:   <AlertCircle size={16} className="text-scout-danger" />,
   info:    <AlertCircle size={16} className="text-sky-400" />,
 }
 
@@ -50,15 +50,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 48 }}
                 className={cn(
-                  'flex items-center gap-3 rounded-xl border border-white/15 bg-slate-800/90 px-4 py-3 shadow-xl backdrop-blur-xl',
-                  'text-sm text-white',
+                  'flex items-center gap-3 rounded-scout-lg border border-scout-border bg-scout-elevated px-4 py-3 shadow-xl backdrop-blur-xl',
+                  'text-sm text-scout-text',
                 )}
               >
                 {icons[t.type]}
                 <span className="flex-1">{t.message}</span>
                 <button
                   onClick={() => setToasts(s => s.filter(x => x.id !== t.id))}
-                  className="text-white/40 hover:text-white"
+                  className="text-scout-dim hover:text-scout-text"
                 >
                   <X size={14} />
                 </button>

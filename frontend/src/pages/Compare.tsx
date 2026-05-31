@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
@@ -11,14 +11,38 @@ import { formatPrice, cn } from '@/lib/utils'
 import { Spinner } from '@/components/ui/Spinner'
 
 export default function Compare() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const idsParam = searchParams.get('ids') || ''
-  const ids = useMemo(
+  const urlIds = useMemo(
     () => idsParam.split(',').map(Number).filter(n => !isNaN(n) && n > 0),
     [idsParam],
   )
 
-  const remove = useCompareStore(s => s.remove)
+  const storeIds = useCompareStore(s => s.ids)
+  const removeFromStore = useCompareStore(s => s.remove)
+
+  // Источник истины — URL (чтобы ссылку можно было расшарить), но если пришли
+  // без ?ids= (например, из бокового меню), берём выбранное из store.
+  const ids = urlIds.length ? urlIds : storeIds
+
+  // Подставляем выбранное из store в URL, если он пуст — чтобы ссылка была расшариваемой.
+  useEffect(() => {
+    if (!urlIds.length && storeIds.length) {
+      setSearchParams({ ids: storeIds.join(',') }, { replace: true })
+    }
+  }, [urlIds.length, storeIds, setSearchParams])
+
+  // Удаление должно менять и URL (источник данных запроса), и store
+  // (для синхронизации чекбоксов в каталоге и плавающего бара).
+  const remove = (id: number) => {
+    removeFromStore(id)
+    const next = ids.filter(x => x !== id)
+    if (next.length) {
+      setSearchParams({ ids: next.join(',') }, { replace: true })
+    } else {
+      setSearchParams({}, { replace: true })
+    }
+  }
   const [aiVerdict, setAiVerdict] = useState<string | null>(null)
   const [aiCached, setAiCached] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
@@ -28,6 +52,20 @@ export default function Compare() {
     queryFn: () => compareApi.get(ids),
     enabled: ids.length > 0,
   })
+
+  // Реконсиляция: бэкенд отдаёт только товары с офферами. Если в store/URL
+  // остались id товаров без офферов (их отфильтровали из каталога), убираем их,
+  // чтобы счётчик в баре сходился с тем, что реально можно сравнить.
+  useEffect(() => {
+    if (isLoading || !data) return
+    const present = new Set(data.map(i => i.id))
+    const stale = ids.filter(id => !present.has(id))
+    if (!stale.length) return
+    stale.forEach(id => removeFromStore(id))
+    const next = ids.filter(id => present.has(id))
+    setSearchParams(next.length ? { ids: next.join(',') } : {}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, isLoading])
 
   const aiMutation = useMutation({
     mutationFn: () => compareApi.aiSummary(ids),

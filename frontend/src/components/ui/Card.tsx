@@ -10,8 +10,8 @@ export function Card({ hover, className, children, ...props }: CardProps) {
     <div
       {...props}
       className={cn(
-        'bg-steam-card border border-steam-border rounded-steam',
-        hover && 'cursor-pointer transition-colors duration-100 hover:border-steam-blue/60 hover:bg-steam-panel',
+        'bg-scout-elevated border border-scout-subtle rounded-scout-lg',
+        hover && 'cursor-pointer transition-all duration-200 hover:border-scout-border hover:-translate-y-0.5',
         className,
       )}
     >

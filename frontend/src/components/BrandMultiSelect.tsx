@@ -39,29 +39,29 @@ export function BrandMultiSelect({ options, selected, onToggle }: Props) {
   return (
     <div className="space-y-2">
       <div className="relative">
-        <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-steam-muted" />
+        <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-scout-muted" />
         <input
           type="text"
           placeholder="Поиск бренда…"
           value={q}
           onChange={e => setQ(e.target.value)}
-          className="w-full rounded-steam border border-steam-border bg-steam-darker pl-7 pr-2 py-1.5 text-xs text-steam-light focus:border-steam-blue focus:outline-none"
+          className="w-full rounded-scout border border-scout-border bg-scout-bg pl-7 pr-2 py-1.5 text-xs text-scout-text focus:border-scout-accent focus:outline-none"
         />
       </div>
 
       <div className="max-h-60 overflow-y-auto space-y-1 pr-1">
         {extraSelected.map(name => (
-          <label key={`sel-${name}`} className="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-steam-darker">
+          <label key={`sel-${name}`} className="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-scout-bg">
             <span className="flex items-center gap-2 truncate">
               <input
                 type="checkbox"
                 checked
                 onChange={() => onToggle(name)}
-                className="h-3.5 w-3.5 accent-steam-blue"
+                className="h-3.5 w-3.5 accent-scout-accent"
               />
-              <span className="text-xs text-steam-light truncate">{name}</span>
+              <span className="text-xs text-scout-text truncate">{name}</span>
             </span>
-            <span className="text-[10px] text-steam-muted">✓</span>
+            <span className="text-[10px] text-scout-muted">✓</span>
           </label>
         ))}
         {filtered.map(opt => {
@@ -69,23 +69,23 @@ export function BrandMultiSelect({ options, selected, onToggle }: Props) {
           return (
             <label
               key={opt.name}
-              className="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-steam-darker"
+              className="flex cursor-pointer items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-scout-bg"
             >
               <span className="flex items-center gap-2 truncate">
                 <input
                   type="checkbox"
                   checked={isChecked}
                   onChange={() => onToggle(opt.name)}
-                  className="h-3.5 w-3.5 accent-steam-blue"
+                  className="h-3.5 w-3.5 accent-scout-accent"
                 />
-                <span className="text-xs text-steam-light truncate" title={opt.name}>{opt.name}</span>
+                <span className="text-xs text-scout-text truncate" title={opt.name}>{opt.name}</span>
               </span>
-              <span className="text-[10px] text-steam-muted">{opt.count}</span>
+              <span className="text-[10px] text-scout-muted">{opt.count}</span>
             </label>
           )
         })}
         {!filtered.length && (
-          <div className="px-1 py-2 text-xs text-steam-muted">Ничего не найдено</div>
+          <div className="px-1 py-2 text-xs text-scout-muted">Ничего не найдено</div>
         )}
       </div>
     </div>

@@ -16,17 +16,21 @@ export interface BuildSlotItem {
 }
 
 interface BuildState {
+  ownerId: number | null
   slots: Partial<Record<SlotKey, BuildSlotItem>>
   setSlot: (slot: SlotKey, item: BuildSlotItem) => void
   clearSlot: (slot: SlotKey) => void
   clearAll: () => void
   totalPrice: () => number
   filledCount: () => number
+  /** Привязывает сборку к юзеру; при смене аккаунта очищает чужую сборку. */
+  ensureOwner: (userId: number | null) => void
 }
 
 export const useBuildStore = create<BuildState>()(
   persist(
     (set, get) => ({
+      ownerId: null,
       slots: {},
 
       setSlot: (slot, item) =>
@@ -48,10 +52,22 @@ export const useBuildStore = create<BuildState>()(
       },
 
       filledCount: () => Object.keys(get().slots).length,
+
+      ensureOwner: (userId) => {
+        const cur = get().ownerId
+        if (cur === userId) return
+        // null = сборка ещё не привязана (старт/гость): присваиваем владельца,
+        // НЕ стирая слоты. Чистим только при реальной смене аккаунта или выходе.
+        if (cur === null) {
+          set({ ownerId: userId })
+          return
+        }
+        set({ ownerId: userId, slots: {} })
+      },
     }),
     {
       name: 'pricewatch:build',
-      version: 1,
+      version: 2,
     },
   ),
 )

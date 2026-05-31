@@ -43,16 +43,16 @@ export function PriceRangeSlider({ min, max, value, onChange }: Props) {
           min={min}
           max={high}
           onChange={e => setLow(Math.max(min, Math.min(Number(e.target.value), high)))}
-          className="w-full rounded-steam border border-steam-border bg-steam-darker px-2 py-1.5 text-xs text-steam-light focus:border-steam-blue focus:outline-none"
+          className="w-full rounded-scout border border-scout-border bg-scout-bg px-2 py-1.5 text-xs text-scout-text focus:border-scout-accent focus:outline-none"
         />
-        <span className="text-steam-muted">—</span>
+        <span className="text-scout-muted">—</span>
         <input
           type="number"
           value={high}
           min={low}
           max={max}
           onChange={e => setHigh(Math.min(max, Math.max(Number(e.target.value), low)))}
-          className="w-full rounded-steam border border-steam-border bg-steam-darker px-2 py-1.5 text-xs text-steam-light focus:border-steam-blue focus:outline-none"
+          className="w-full rounded-scout border border-scout-border bg-scout-bg px-2 py-1.5 text-xs text-scout-text focus:border-scout-accent focus:outline-none"
         />
       </div>
 
@@ -65,20 +65,20 @@ export function PriceRangeSlider({ min, max, value, onChange }: Props) {
         onValueChange={([a, b]) => { setLow(a); setHigh(b) }}
         minStepsBetweenThumbs={1}
       >
-        <RSlider.Track className="relative h-1 grow rounded-full bg-steam-border">
-          <RSlider.Range className="absolute h-full rounded-full bg-steam-blue" />
+        <RSlider.Track className="relative h-1 grow rounded-full bg-scout-border">
+          <RSlider.Range className="absolute h-full rounded-full bg-scout-accent" />
         </RSlider.Track>
         <RSlider.Thumb
           aria-label="Минимальная цена"
-          className="block h-4 w-4 rounded-full bg-steam-blue shadow ring-1 ring-steam-darker hover:scale-110 transition-transform"
+          className="block h-4 w-4 rounded-full bg-scout-accent shadow ring-1 ring-scout-bg hover:scale-110 transition-transform"
         />
         <RSlider.Thumb
           aria-label="Максимальная цена"
-          className="block h-4 w-4 rounded-full bg-steam-blue shadow ring-1 ring-steam-darker hover:scale-110 transition-transform"
+          className="block h-4 w-4 rounded-full bg-scout-accent shadow ring-1 ring-scout-bg hover:scale-110 transition-transform"
         />
       </RSlider.Root>
 
-      <div className="flex justify-between text-[10px] text-steam-muted">
+      <div className="flex justify-between text-[10px] text-scout-muted">
         <span>{min.toLocaleString('ru-RU')} ₽</span>
         <span>{max.toLocaleString('ru-RU')} ₽</span>
       </div>

@@ -228,7 +228,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Subscription
         fields = ('id', 'product', 'product_name', 'target_price', 'is_active', 'created_at')
-        read_only_fields = ('is_active', 'created_at')
+        read_only_fields = ('created_at',)
 
     def validate_product(self, value: Product) -> Product:
         user = self.context['request'].user

@@ -25,8 +25,8 @@ const WINDOW_DAYS: Record<PriceWindow, number | null> = {
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
   return (
-    <div className="rounded-xl border border-white/15 bg-slate-900/95 p-3 text-sm shadow-xl backdrop-blur-xl">
-      <p className="mb-1 text-white/50">{label}</p>
+    <div className="rounded-scout border border-scout-border bg-scout-elevated p-3 text-sm shadow-xl">
+      <p className="mb-1 text-scout-muted">{label}</p>
       {payload.map((p: any) => (
         <p key={p.dataKey} className="font-semibold" style={{ color: p.color }}>
           {formatPrice(p.value)}
@@ -91,14 +91,14 @@ export function PriceChart({ productId, targetPrice, window = 'all', stats }: Pr
   if (isLoading) return <PageSpinner />
   if (!data?.length) {
     return (
-      <div className="flex h-40 items-center justify-center text-sm text-white/40">
+      <div className="flex h-40 items-center justify-center text-sm text-scout-dim">
         История цен недоступна
       </div>
     )
   }
   if (!chartData.length) {
     return (
-      <div className="flex h-40 items-center justify-center text-sm text-white/40">
+      <div className="flex h-40 items-center justify-center text-sm text-scout-dim">
         Нет данных за выбранный период
       </div>
     )
@@ -159,10 +159,10 @@ export function PriceChart({ productId, targetPrice, window = 'all', stats }: Pr
         {targetPrice && (
           <ReferenceLine
             y={targetPrice}
-            stroke="#22c55e"
+            stroke="#10B981"
             strokeDasharray="6 3"
           >
-            <Label value={`Цель ${formatPrice(targetPrice)}`} fill="#22c55e" fontSize={11} position="insideBottomRight" />
+            <Label value={`Цель ${formatPrice(targetPrice)}`} fill="#10B981" fontSize={11} position="insideBottomRight" />
           </ReferenceLine>
         )}
 
@@ -172,12 +172,12 @@ export function PriceChart({ productId, targetPrice, window = 'all', stats }: Pr
             x={minDotX as string}
             y={statsWindow.min}
             r={6}
-            fill="#22c55e"
-            stroke="#0f172a"
+            fill="#10B981"
+            stroke="#0A0A0A"
             strokeWidth={2}
             ifOverflow="extendDomain"
           >
-            <Label value={`min ${formatPrice(statsWindow.min)}`} fill="#22c55e" fontSize={11} position="top" />
+            <Label value={`min ${formatPrice(statsWindow.min)}`} fill="#10B981" fontSize={11} position="top" />
           </ReferenceDot>
         )}
 
@@ -188,7 +188,7 @@ export function PriceChart({ productId, targetPrice, window = 'all', stats }: Pr
             y={statsWindow.max}
             r={6}
             fill="#ef4444"
-            stroke="#0f172a"
+            stroke="#0A0A0A"
             strokeWidth={2}
             ifOverflow="extendDomain"
           >

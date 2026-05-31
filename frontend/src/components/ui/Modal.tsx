@@ -33,14 +33,14 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
                 exit={{ opacity: 0, scale: 0.95, y: 16 }}
                 transition={{ duration: 0.2, ease: 'easeOut' }}
               >
-                <div className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-900/90 shadow-2xl backdrop-blur-2xl">
-                  <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
-                    <Dialog.Title className="text-lg font-semibold text-white">
+                <div className="w-full max-w-lg rounded-scout-lg border border-scout-border bg-scout-elevated shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-scout-subtle px-6 py-4">
+                    <Dialog.Title className="text-base font-semibold text-scout-text">
                       {title}
                     </Dialog.Title>
                     <Dialog.Close asChild>
                       <button
-                        className="rounded-lg p-1.5 text-white/50 transition hover:bg-white/10 hover:text-white"
+                        className="rounded-scout p-1.5 text-scout-dim transition-colors hover:bg-scout-subtle hover:text-scout-text"
                         aria-label="Закрыть"
                       >
                         <X size={18} />

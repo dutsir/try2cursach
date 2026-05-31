@@ -21,6 +21,14 @@ export interface Category {
   slug: string
 }
 
+export interface CategoryTreeNode {
+  id: number
+  slug: string
+  name: string
+  product_count: number
+  children: CategoryTreeNode[]
+}
+
 export const productsApi = {
   list: (params?: ProductsParams) =>
     api.get<PaginatedResponse<Product>>('/api/products/', params as Record<string, string | number | boolean | undefined>),
@@ -41,4 +49,7 @@ export const productsApi = {
 export const categoriesApi = {
   list: () =>
     api.get<PaginatedResponse<Category>>('/api/categories/', { page_size: 200, root: true }),
+
+  tree: () =>
+    api.get<CategoryTreeNode[]>('/api/categories/tree/'),
 }

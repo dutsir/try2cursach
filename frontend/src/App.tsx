@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
@@ -7,6 +7,8 @@ import { ToastProvider } from '@/components/ui/Toast'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { initAuth } from '@/hooks/useAuth'
 import { api } from '@/api/client'
+import { useCompareStore } from '@/store/compare'
+import { useBuildStore } from '@/store/build'
 import type { User } from '@/types'
 
 const Dashboard     = lazy(() => import('@/pages/Dashboard'))
@@ -14,6 +16,7 @@ const Catalog       = lazy(() => import('@/pages/Catalog'))
 const Compare       = lazy(() => import('@/pages/Compare'))
 const Builder       = lazy(() => import('@/pages/Builder'))
 const Wishlist      = lazy(() => import('@/pages/Wishlist'))
+const Subscriptions = lazy(() => import('@/pages/Subscriptions'))
 const ProductDetail = lazy(() => import('@/pages/ProductDetail'))
 const Notifications = lazy(() => import('@/pages/Notifications'))
 const Login         = lazy(() => import('@/pages/Login'))
@@ -43,6 +46,27 @@ export default function App() {
       setLoading(false)
     })
   }, [])
+
+  const prevUserIdRef = useRef<number | null | undefined>(undefined)
+
+  // Привязываем локальные списки (сравнение, сборка) к текущему юзеру.
+  // При смене аккаунта или выходе чужие списки очищаются.
+  // Ждём окончания initAuth: на старте user=null (ещё не загружен), и без этой
+  // защиты ensureOwner(null) затирал бы сохранённый список при каждой перезагрузке.
+  useEffect(() => {
+    if (loading) return
+    const id = user?.id ?? null
+    useCompareStore.getState().ensureOwner(id)
+    useBuildStore.getState().ensureOwner(id)
+
+    // Сброс React Query кэша при реальной смене аккаунта (вход/выход/другой юзер).
+    // Иначе подписки/вишлист/уведомления предыдущего юзера остаются в кэше SPA
+    // и показываются под другим аккаунтом без перезагрузки страницы.
+    if (prevUserIdRef.current !== undefined && prevUserIdRef.current !== id) {
+      qc.clear()
+    }
+    prevUserIdRef.current = id
+  }, [user, loading])
 
   async function handleLogout() {
     try {
@@ -76,6 +100,7 @@ export default function App() {
                 <Route path="/compare"       element={<Compare />} />
                 <Route path="/builder"       element={<Builder />} />
                 <Route path="/wishlist"      element={<Wishlist />} />
+                <Route path="/subscriptions" element={<Subscriptions />} />
                 <Route path="/products/:id"  element={<ProductDetail />} />
                 <Route path="/notifications" element={<Notifications />} />
               </Route>

@@ -28,16 +28,16 @@ interface CardProps {
 
 function StatCard({ label, value, caption, tone = 'default' }: CardProps) {
   const toneClass = {
-    default: 'text-white',
-    good: 'text-emerald-400',
-    bad: 'text-rose-400',
-    neutral: 'text-violet-300',
+    default: 'text-scout-text',
+    good: 'text-scout-success',
+    bad: 'text-scout-danger',
+    neutral: 'text-scout-accent',
   }[tone]
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-      <div className="text-[11px] uppercase tracking-wider text-white/40">{label}</div>
-      <div className={cn('mt-1 text-lg font-semibold', toneClass)}>{value}</div>
-      {caption && <div className="mt-0.5 text-xs text-white/40">{caption}</div>}
+    <div className="rounded-scout border border-scout-subtle bg-scout-bg px-4 py-3">
+      <div className="scout-caption">{label}</div>
+      <div className={cn('mt-1 text-lg font-semibold scout-tabnums', toneClass)}>{value}</div>
+      {caption && <div className="mt-0.5 text-xs text-scout-dim">{caption}</div>}
     </div>
   )
 }
@@ -120,8 +120,8 @@ export function PriceWindowStats({ productId, stats, window }: Props) {
       {dailyBars.length > 0 && (
         <div>
           <div className="mb-2 flex items-baseline justify-between">
-            <h3 className="text-sm font-medium text-white/70">Средняя цена по дням</h3>
-            <span className="text-xs text-white/40">{dailyBars.length} {pluralize(dailyBars.length, 'день', 'дня', 'дней')}</span>
+            <h3 className="text-sm font-medium text-scout-muted">Средняя цена по дням</h3>
+            <span className="text-xs text-scout-dim">{dailyBars.length} {pluralize(dailyBars.length, 'день', 'дня', 'дней')}</span>
           </div>
           <ResponsiveContainer width="100%" height={140}>
             <BarChart data={dailyBars} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
@@ -146,9 +146,9 @@ export function PriceWindowStats({ productId, stats, window }: Props) {
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null
                   return (
-                    <div className="rounded-lg border border-white/15 bg-slate-900/95 px-3 py-2 text-xs shadow">
-                      <div className="text-white/50">{label}</div>
-                      <div className="font-semibold text-white">{formatPrice(payload[0].value as number)}</div>
+                    <div className="rounded-scout border border-scout-border bg-scout-elevated px-3 py-2 text-xs shadow">
+                      <div className="text-scout-muted">{label}</div>
+                      <div className="font-semibold text-scout-text scout-tabnums">{formatPrice(payload[0].value as number)}</div>
                     </div>
                   )
                 }}
@@ -157,9 +157,9 @@ export function PriceWindowStats({ productId, stats, window }: Props) {
                 {dailyBars.map((d, i) => {
                   const isMin = w?.min != null && d.avg === w.min
                   const isMax = w?.max != null && d.avg === w.max
-                  let fill = '#6346f5'
+                  let fill = '#A855F7'
                   if (isMax) fill = '#ef4444'
-                  else if (isMin) fill = '#22c55e'
+                  else if (isMin) fill = '#10B981'
                   return <Cell key={i} fill={fill} />
                 })}
               </Bar>

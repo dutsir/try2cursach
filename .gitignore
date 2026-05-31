@@ -75,3 +75,4 @@ coverage.xml
 models/
 *.sh
 *.ps1
+design_handoff_scout/

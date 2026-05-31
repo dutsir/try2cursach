@@ -5,6 +5,7 @@ import {
   Wrench,
   GitCompare,
   Star,
+  Target,
   Bell as BellIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -21,6 +22,7 @@ interface DashSidebarProps {
   productsCount?: number
   wishlistCount?: number
   compareCount?: number
+  subscriptionsCount?: number
   notificationsCount?: number
   planUsed?: number
   planLimit?: number
@@ -30,6 +32,7 @@ export function DashSidebar({
   productsCount = 0,
   wishlistCount = 0,
   compareCount = 0,
+  subscriptionsCount = 0,
   notificationsCount = 0,
   planUsed = 0,
   planLimit = 10,
@@ -40,6 +43,7 @@ export function DashSidebar({
     { to: '/builder',       label: 'Сборка ПК',   icon: Wrench },
     { to: '/compare',       label: 'Сравнение',   icon: GitCompare, count: compareCount || undefined },
     { to: '/wishlist',      label: 'Вишлист',     icon: Star,       count: wishlistCount || undefined },
+    { to: '/subscriptions', label: 'Подписки',    icon: Target,     count: subscriptionsCount || undefined },
     { to: '/notifications', label: 'Уведомления', icon: BellIcon,   count: notificationsCount || undefined },
   ]
 

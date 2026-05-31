@@ -100,6 +100,7 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = (
         Product.objects
         .filter(is_active=True)
+        .filter(Exists(Offer.objects.filter(product=OuterRef('pk'))))
         .select_related('category')
         .prefetch_related('offers', 'category__listings')
     )
@@ -264,6 +265,55 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(parent__isnull=True)
         return qs
 
+    @action(detail=False, methods=['get'])
+    def tree(self, request: Request) -> Response:
+        """Иерархия категорий (родитель → дети) со счётчиками товаров.
+
+        URL: /api/categories/tree/
+
+        product_count считает только активные товары, у которых есть хотя бы
+        один оффер (как в каталоге). Пустые категории и пустые ветки опускаются.
+        """
+        # Кол-во товаров (с офферами) по category_id — одним запросом.
+        counts = dict(
+            Product.objects
+            .filter(is_active=True)
+            .filter(Exists(Offer.objects.filter(product=OuterRef('pk'))))
+            .values('category_id')
+            .annotate(c=Count('id'))
+            .values_list('category_id', 'c')
+        )
+
+        cats = list(Category.objects.filter(is_active=True).order_by('name'))
+        children_by_parent: dict[int | None, list[Category]] = {}
+        for c in cats:
+            children_by_parent.setdefault(c.parent_id, []).append(c)
+
+        def build(cat: Category) -> dict | None:
+            kids = [
+                node for node in (
+                    build(child) for child in children_by_parent.get(cat.id, [])
+                ) if node is not None
+            ]
+            own = counts.get(cat.id, 0)
+            total = own + sum(k['product_count'] for k in kids)
+            if total == 0:
+                return None
+            return {
+                'id': cat.id,
+                'slug': cat.slug,
+                'name': cat.name,
+                'product_count': total,
+                'children': kids,
+            }
+
+        roots = [
+            node for node in (
+                build(root) for root in children_by_parent.get(None, [])
+            ) if node is not None
+        ]
+        return Response(roots)
+
 
 class CategoryFacetsView(APIView):
     """Фасеты для sidebar фильтров каталога: brands, price_range, sources, total.
@@ -423,6 +473,7 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
     products = (
         Product.objects
         .filter(id__in=ids, is_active=True)
+        .filter(Exists(Offer.objects.filter(product=OuterRef('pk'))))
         .select_related('category')
         .prefetch_related('offers')
     )
@@ -643,6 +694,7 @@ class OfferViewSet(viewsets.ReadOnlyModelViewSet):
 
 class SubscriptionViewSet(
     mixins.CreateModelMixin,
+    mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     mixins.ListModelMixin,
     viewsets.GenericViewSet,

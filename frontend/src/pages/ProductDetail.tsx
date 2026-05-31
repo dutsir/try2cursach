@@ -43,10 +43,10 @@ export default function ProductDetail() {
 
   if (isLoading) return <PageSpinner />
   if (!product) return (
-    <div className="flex flex-col items-center gap-4 py-24 text-white/40">
+    <div className="flex flex-col items-center gap-4 py-24 text-scout-dim">
       <Package size={56} strokeWidth={1} />
       <p className="text-xl">Товар не найден</p>
-      <Link to="/" className="text-brand-400 hover:underline">← Вернуться в каталог</Link>
+      <Link to="/" className="text-scout-accent hover:underline">← Вернуться в каталог</Link>
     </div>
   )
 
@@ -55,7 +55,7 @@ export default function ProductDetail() {
   return (
     <>
       {/* Breadcrumb */}
-      <Link to="/" className="mb-6 inline-flex items-center gap-2 text-sm text-white/50 hover:text-white transition">
+      <Link to="/" className="mb-6 inline-flex items-center gap-2 text-sm text-scout-muted hover:text-scout-text transition">
         <ArrowLeft size={15} /> Каталог
       </Link>
 
@@ -67,26 +67,26 @@ export default function ProductDetail() {
             <Card className="p-6">
               <div className="flex flex-col gap-6 sm:flex-row">
                 {/* Image */}
-                <div className="flex h-48 w-full items-center justify-center rounded-xl bg-white/5 sm:w-48 sm:shrink-0">
+                <div className="flex h-48 w-full items-center justify-center rounded-scout-lg bg-scout-bg sm:w-48 sm:shrink-0">
                   {bestOffer?.image_url ? (
                     <img
                       src={bestOffer.image_url}
                       alt={product.name}
-                      className="h-full w-full rounded-xl object-contain p-3"
+                      className="h-full w-full rounded-scout-lg object-contain p-3"
                     />
                   ) : (
-                    <Package size={56} className="text-white/20" />
+                    <Package size={56} className="text-scout-dim" />
                   )}
                 </div>
 
                 {/* Info */}
                 <div className="flex flex-1 flex-col gap-3">
                   {product.brand && (
-                    <span className="text-xs font-semibold uppercase tracking-widest text-brand-400">
+                    <span className="text-xs font-semibold uppercase tracking-widest text-scout-accent">
                       {product.brand}
                     </span>
                   )}
-                  <h1 className="text-2xl font-bold leading-snug text-white">{product.name}</h1>
+                  <h1 className="text-2xl font-bold leading-snug text-scout-text">{product.name}</h1>
 
                   <div className="flex flex-wrap gap-2">
                     {product.vendor_code && (
@@ -102,10 +102,10 @@ export default function ProductDetail() {
 
                   {bestOffer && (
                     <div className="mt-auto flex flex-wrap items-center gap-3">
-                      <span className="text-3xl font-bold text-white">{formatPrice(bestOffer.current_price ?? bestOffer.price)}</span>
+                      <span className="text-3xl font-bold text-scout-text">{formatPrice(bestOffer.current_price ?? bestOffer.price)}</span>
                       {bestOffer.old_price && (
                         <>
-                          <span className="text-lg text-white/40 line-through">{formatPrice(bestOffer.old_price)}</span>
+                          <span className="text-lg text-scout-dim line-through">{formatPrice(bestOffer.old_price)}</span>
                           {bestOffer.price && bestOffer.old_price && (
                             <Badge variant="success">-{discount(
                               typeof bestOffer.price === 'string' ? parseFloat(bestOffer.price) : bestOffer.price,
@@ -125,9 +125,9 @@ export default function ProductDetail() {
           <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
             <Card className="p-6">
               <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-                <h2 className="text-lg font-semibold text-white">История цен</h2>
+                <h2 className="text-lg font-semibold text-scout-text">История цен</h2>
                 {/* Переключатель окна */}
-                <div className="inline-flex rounded-xl border border-white/10 bg-white/5 p-1">
+                <div className="inline-flex rounded-scout-lg border border-scout-subtle bg-scout-bg p-1">
                   {(['7d', '30d', 'all'] as PriceWindow[]).map(w => (
                     <button
                       key={w}
@@ -135,8 +135,8 @@ export default function ProductDetail() {
                       className={cn(
                         'rounded-lg px-3 py-1.5 text-xs font-medium transition',
                         priceWindow === w
-                          ? 'bg-brand-600 text-white'
-                          : 'text-white/60 hover:text-white',
+                          ? 'bg-scout-accent text-scout-text'
+                          : 'text-scout-muted hover:text-scout-text',
                       )}
                     >
                       {w === '7d' ? '7 дней' : w === '30d' ? '30 дней' : 'Всё время'}
@@ -162,19 +162,19 @@ export default function ProductDetail() {
               </div>
 
               {/* Подсказки про линии */}
-              <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
+              <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-scout-dim">
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="h-0.5 w-4 bg-violet-400" /> средняя
+                  <span className="h-0.5 w-4 bg-scout-accent" /> средняя
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" /> минимум
+                  <span className="h-2 w-2 rounded-full bg-scout-success" /> минимум
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-rose-500" /> максимум
+                  <span className="h-2 w-2 rounded-full bg-scout-danger" /> максимум
                 </span>
                 {subscription && (
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="h-0.5 w-4 bg-emerald-500" /> цель {formatPrice(subscription.target_price)}
+                    <span className="h-0.5 w-4 bg-scout-success" /> цель {formatPrice(subscription.target_price)}
                   </span>
                 )}
               </div>
@@ -185,7 +185,7 @@ export default function ProductDetail() {
           {product.offers && product.offers.length > 0 && (
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
               <Card className="p-6">
-                <h2 className="mb-4 text-lg font-semibold text-white">Цены в магазинах</h2>
+                <h2 className="mb-4 text-lg font-semibold text-scout-text">Цены в магазинах</h2>
                 <div className="flex flex-col divide-y divide-white/10">
                   {product.offers.map(offer => (
                     <div key={offer.id} className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
@@ -193,7 +193,7 @@ export default function ProductDetail() {
                         className="flex h-2 w-2 shrink-0 rounded-full"
                         style={{ background: SOURCE_COLORS[offer.source] }}
                       />
-                      <span className="flex-1 font-medium text-white">
+                      <span className="flex-1 font-medium text-scout-text">
                         {SOURCE_LABELS[offer.source] ?? offer.source}
                       </span>
 
@@ -204,9 +204,9 @@ export default function ProductDetail() {
                       )}
 
                       <div className="text-right">
-                        <p className="font-semibold text-white">{offer.current_price ? formatPrice(offer.current_price) : 'не число ₽'}</p>
+                        <p className="font-semibold text-scout-text">{offer.current_price ? formatPrice(offer.current_price) : 'не число ₽'}</p>
                         {offer.old_price && (
-                          <p className="text-xs text-white/40 line-through">{formatPrice(offer.old_price)}</p>
+                          <p className="text-xs text-scout-dim line-through">{formatPrice(offer.old_price)}</p>
                         )}
                       </div>
 
@@ -214,7 +214,7 @@ export default function ProductDetail() {
                         href={offer.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="ml-2 text-white/40 hover:text-white transition"
+                        className="ml-2 text-scout-dim hover:text-scout-text transition"
                       >
                         <ExternalLink size={15} />
                       </a>
@@ -231,14 +231,14 @@ export default function ProductDetail() {
           {/* Action card */}
           <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 }}>
             <Card className="p-6 flex flex-col gap-4">
-              <h2 className="font-semibold text-white">Действия</h2>
+              <h2 className="font-semibold text-scout-text">Действия</h2>
 
               {bestOffer && (
                 <a
                   href={bestOffer.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-3 font-medium text-white transition hover:bg-brand-500"
+                  className="flex w-full items-center justify-center gap-2 rounded-scout-lg bg-scout-accent py-3 font-medium text-scout-text transition hover:bg-scout-accent-hover"
                 >
                   <ShoppingCart size={16} />
                   Купить в {SOURCE_LABELS[bestOffer.source]}
@@ -255,9 +255,9 @@ export default function ProductDetail() {
               </Button>
 
               {isSubscribed && subscription && (
-                <div className="rounded-xl bg-brand-600/15 px-4 py-3 text-sm">
-                  <p className="text-white/60">Ваша целевая цена:</p>
-                  <p className="text-lg font-bold text-brand-300">{formatPrice(subscription.target_price)}</p>
+                <div className="rounded-scout-lg bg-scout-accent/10 px-4 py-3 text-sm">
+                  <p className="text-scout-muted">Ваша целевая цена:</p>
+                  <p className="text-lg font-bold text-scout-accent">{formatPrice(subscription.target_price)}</p>
                 </div>
               )}
             </Card>
@@ -267,7 +267,7 @@ export default function ProductDetail() {
           {product.last_parsed_at && (
             <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}>
               <Card className="px-5 py-4">
-                <p className="text-xs text-white/40">
+                <p className="text-xs text-scout-dim">
                   Обновлено {formatRelativeDate(product.last_parsed_at)}
                 </p>
               </Card>

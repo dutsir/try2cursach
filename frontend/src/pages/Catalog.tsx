@@ -44,12 +44,12 @@ export default function Catalog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [f.search])
 
-  const { data: categoriesData } = useQuery({
-    queryKey: ['categories'],
-    queryFn: categoriesApi.list,
+  const { data: categoryTree } = useQuery({
+    queryKey: ['categories-tree'],
+    queryFn: categoriesApi.tree,
     staleTime: 300_000,
   })
-  const categories = categoriesData?.results ?? []
+  const roots = categoryTree ?? []
 
   const apiParams = f.toApiParams()
   const queryKey = ['products-inf', apiParams]
@@ -109,8 +109,21 @@ export default function Catalog() {
               className="rounded-scout border border-scout-subtle bg-scout-elevated px-3 py-2 text-sm text-scout-text focus:border-scout-accent/60 focus:outline-none max-w-[220px]"
             >
               <option value="">Все категории</option>
-              {categories.map(c => (
-                <option key={c.slug} value={c.slug}>{c.name}</option>
+              {roots.map(root => (
+                root.children.length > 0 ? (
+                  <optgroup key={root.slug} label={`${root.name} (${root.product_count})`}>
+                    <option value={root.slug}>Все · {root.name}</option>
+                    {root.children.map(child => (
+                      <option key={child.slug} value={child.slug}>
+                        {child.name} ({child.product_count})
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  <option key={root.slug} value={root.slug}>
+                    {root.name} ({root.product_count})
+                  </option>
+                )
               ))}
             </select>
 

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { DashNav } from './DashNav'
 import { DashSidebar } from './DashSidebar'
 import { AddProductModal } from './AddProductModal'
-import { notificationsApi } from '@/api/subscriptions'
+import { notificationsApi, subscriptionsApi } from '@/api/subscriptions'
 import { productsApi } from '@/api/products'
 import { wishlistApi } from '@/api/wishlist'
 import { useCompareStore } from '@/store/compare'
@@ -49,6 +49,14 @@ export function ScoutLayout({ user, children, onLogout }: ScoutLayoutProps) {
   })
   const wishlistCount = wishlist?.items?.length ?? 0
 
+  const { data: subs } = useQuery({
+    queryKey: ['subscriptions'],
+    queryFn: subscriptionsApi.list,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const subscriptionsCount = subs?.count ?? subs?.results?.length ?? 0
+
   return (
     <div className="min-h-screen bg-scout-bg text-scout-text font-sans">
       <DashNav
@@ -63,6 +71,7 @@ export function ScoutLayout({ user, children, onLogout }: ScoutLayoutProps) {
             productsCount={productsCount}
             wishlistCount={wishlistCount}
             compareCount={compareCount}
+            subscriptionsCount={subscriptionsCount}
             notificationsCount={unreadCount}
             planUsed={productsCount}
             planLimit={10}

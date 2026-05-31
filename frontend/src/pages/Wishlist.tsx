@@ -118,10 +118,10 @@ export default function WishlistPage() {
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-white">{wishlist?.title || 'Мой вишлист'}</h1>
+              <h1 className="text-2xl font-bold text-scout-text">{wishlist?.title || 'Мой вишлист'}</h1>
               <button
                 onClick={() => { setNewTitle(wishlist?.title ?? ''); setEditTitle(true) }}
-                className="text-steam-muted hover:text-steam-blue transition-colors"
+                className="text-scout-muted hover:text-scout-accent transition-colors"
                 title="Изменить название"
               >
                 <Edit2 size={15} />
@@ -132,38 +132,38 @@ export default function WishlistPage() {
             <Plus size={14} /> Добавить товар
           </Button>
         </div>
-        <div className="h-px bg-steam-border mt-3" />
+        <div className="h-px bg-scout-border mt-3" />
 
         {items.length > 0 && (
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
-              <p className="text-[10px] uppercase tracking-wider text-steam-muted">Товаров</p>
-              <p className="text-xl font-bold text-steam-light mt-1">{items.length}</p>
+            <div className="bg-scout-elevated border border-scout-border rounded-scout p-3">
+              <p className="text-[10px] uppercase tracking-wider text-scout-muted">Товаров</p>
+              <p className="text-xl font-bold text-scout-text mt-1">{items.length}</p>
             </div>
-            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
-              <p className="text-[10px] uppercase tracking-wider text-steam-muted">Единиц</p>
-              <p className="text-xl font-bold text-steam-light mt-1">{totalUnits}</p>
+            <div className="bg-scout-elevated border border-scout-border rounded-scout p-3">
+              <p className="text-[10px] uppercase tracking-wider text-scout-muted">Единиц</p>
+              <p className="text-xl font-bold text-scout-text mt-1">{totalUnits}</p>
             </div>
-            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
-              <p className="text-[10px] uppercase tracking-wider text-steam-muted">В наличии</p>
-              <p className="text-xl font-bold text-steam-light mt-1">
-                <span className="text-steam-green">{availableCount}</span>
+            <div className="bg-scout-elevated border border-scout-border rounded-scout p-3">
+              <p className="text-[10px] uppercase tracking-wider text-scout-muted">В наличии</p>
+              <p className="text-xl font-bold text-scout-text mt-1">
+                <span className="text-scout-success">{availableCount}</span>
                 {unavailableCount > 0 && (
-                  <span className="text-steam-muted text-sm font-normal"> / {items.length}</span>
+                  <span className="text-scout-muted text-sm font-normal"> / {items.length}</span>
                 )}
               </p>
             </div>
-            <div className="bg-steam-card border border-steam-border rounded-steam p-3">
-              <p className="text-[10px] uppercase tracking-wider text-steam-muted">Сумма</p>
-              <p className="text-xl font-bold text-steam-green mt-1">{formatPrice(totalPrice)}</p>
+            <div className="bg-scout-elevated border border-scout-border rounded-scout p-3">
+              <p className="text-[10px] uppercase tracking-wider text-scout-muted">Сумма</p>
+              <p className="text-xl font-bold text-scout-success mt-1">{formatPrice(totalPrice)}</p>
             </div>
           </div>
         )}
       </div>
 
       {items.length === 0 ? (
-        <div className="bg-steam-card border border-steam-border rounded-steam py-16 flex flex-col items-center gap-3 text-steam-muted">
-          <p className="text-base text-steam-light">Вишлист пуст</p>
+        <div className="bg-scout-elevated border border-scout-border rounded-scout py-16 flex flex-col items-center gap-3 text-scout-muted">
+          <p className="text-base text-scout-text">Вишлист пуст</p>
           <p className="text-xs">Добавьте товары, которые хотите купить позже</p>
           <Button variant="green" className="mt-2" onClick={() => setAddItemOpen(true)}>
             <Plus size={14} /> Добавить товар
@@ -177,56 +177,56 @@ export default function WishlistPage() {
               <div
                 key={item.id}
                 className={cn(
-                  'bg-steam-card border rounded-steam mb-2 p-3 flex flex-col gap-3 sm:flex-row sm:items-center transition-colors',
+                  'bg-scout-elevated border rounded-scout mb-2 p-3 flex flex-col gap-3 sm:flex-row sm:items-center transition-colors',
                   available
-                    ? 'border-steam-border hover:border-steam-blue/40'
-                    : 'border-steam-border/40 opacity-60',
+                    ? 'border-scout-border hover:border-scout-accent/40'
+                    : 'border-scout-border/40 opacity-60',
                 )}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm font-semibold text-steam-light truncate">{item.product.name}</h3>
+                    <h3 className="text-sm font-semibold text-scout-text truncate">{item.product.name}</h3>
                     {!available && (
                       <Badge variant="danger">Нет в наличии</Badge>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-3 mt-0.5">
                     {item.product.brand && (
-                      <p className="text-[10px] uppercase tracking-wider text-steam-muted">{item.product.brand}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-scout-muted">{item.product.brand}</p>
                     )}
-                    <p className="text-[10px] text-steam-dim" title={item.added_at}>
+                    <p className="text-[10px] text-scout-dim" title={item.added_at}>
                       Добавлен {formatRelativeDate(item.added_at)}
                     </p>
                   </div>
                   {item.note && (
-                    <p className="mt-2 text-xs text-steam-muted italic border-l-2 border-steam-border pl-2">{item.note}</p>
+                    <p className="mt-2 text-xs text-scout-muted italic border-l-2 border-scout-border pl-2">{item.note}</p>
                   )}
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-5 sm:justify-end">
                   {item.product.best_offer ? (
                     <div className="text-right">
-                      <p className="text-[10px] uppercase tracking-wider text-steam-muted">Цена</p>
-                      <p className="text-sm font-bold text-steam-light">{formatPrice(item.product.best_offer.price)}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-scout-muted">Цена</p>
+                      <p className="text-sm font-bold text-scout-text">{formatPrice(item.product.best_offer.price)}</p>
                       <Badge variant="ghost" className="mt-0.5">{item.product.best_offer.source}</Badge>
                     </div>
                   ) : (
                     <div className="text-right">
-                      <p className="text-[10px] uppercase tracking-wider text-steam-muted">Цена</p>
-                      <p className="text-sm text-steam-dim">—</p>
+                      <p className="text-[10px] uppercase tracking-wider text-scout-muted">Цена</p>
+                      <p className="text-sm text-scout-dim">—</p>
                     </div>
                   )}
 
                   <div className="text-right">
-                    <p className="text-[10px] uppercase tracking-wider text-steam-muted">Кол-во</p>
-                    <p className="text-sm font-bold text-steam-light">{item.quantity}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-scout-muted">Кол-во</p>
+                    <p className="text-sm font-bold text-scout-text">{item.quantity}</p>
                   </div>
 
                   <div className="text-right">
-                    <p className="text-[10px] uppercase tracking-wider text-steam-muted">Сумма</p>
+                    <p className="text-[10px] uppercase tracking-wider text-scout-muted">Сумма</p>
                     <p className={cn(
                       'text-sm font-bold',
-                      available ? 'text-steam-green' : 'text-steam-dim',
+                      available ? 'text-scout-success' : 'text-scout-dim',
                     )}>
                       {item.product.best_offer && item.product.best_offer.price
                         ? formatPrice(item.product.best_offer.price * item.quantity)
@@ -241,7 +241,7 @@ export default function WishlistPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         title="Открыть в магазине"
-                        className="p-1.5 rounded-steam text-steam-muted hover:bg-steam-panel hover:text-steam-blue transition-colors"
+                        className="p-1.5 rounded-scout text-scout-muted hover:bg-scout-subtle hover:text-scout-accent transition-colors"
                       >
                         <ExternalLink size={14} />
                       </a>
@@ -250,7 +250,7 @@ export default function WishlistPage() {
                       onClick={() => deleteItemMutation.mutate(item.id)}
                       disabled={deleteItemMutation.isPending}
                       title="Удалить из вишлиста"
-                      className="p-1.5 rounded-steam text-steam-muted hover:bg-[#5a1a1a] hover:text-white transition-colors disabled:opacity-50"
+                      className="p-1.5 rounded-scout text-scout-muted hover:bg-scout-danger/15 hover:text-scout-danger transition-colors disabled:opacity-50"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -271,23 +271,23 @@ export default function WishlistPage() {
           />
 
           {debouncedSearch.length > 1 && (
-            <div className="max-h-56 overflow-y-auto border border-steam-border rounded-steam bg-steam-darker">
+            <div className="max-h-56 overflow-y-auto border border-scout-border rounded-scout bg-scout-bg">
               {searchResults?.results && searchResults.results.length > 0 ? (
                 <ul>
                   {searchResults.results.map(product => (
                     <li key={product.id}>
                       <button
                         onClick={() => { setSelectedProduct(product); setSearch(product.name) }}
-                        className="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-steam-panel border-b border-steam-border/50 last:border-0"
+                        className="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-scout-subtle border-b border-scout-border/50 last:border-0"
                       >
                         <div className="flex-1 min-w-0">
-                          <p className="truncate text-sm font-medium text-steam-light">{product.name}</p>
+                          <p className="truncate text-sm font-medium text-scout-text">{product.name}</p>
                           {product.brand && (
-                            <p className="text-[10px] uppercase tracking-wider text-steam-muted">{product.brand}</p>
+                            <p className="text-[10px] uppercase tracking-wider text-scout-muted">{product.brand}</p>
                           )}
                         </div>
                         {product.best_offer && (
-                          <p className="shrink-0 text-sm font-bold text-steam-green">
+                          <p className="shrink-0 text-sm font-bold text-scout-success">
                             {formatPrice(product.best_offer.price)}
                           </p>
                         )}
@@ -296,7 +296,7 @@ export default function WishlistPage() {
                   ))}
                 </ul>
               ) : (
-                <div className="px-4 py-6 text-center text-xs text-steam-muted">
+                <div className="px-4 py-6 text-center text-xs text-scout-muted">
                   Ничего не найдено
                 </div>
               )}
@@ -304,18 +304,18 @@ export default function WishlistPage() {
           )}
 
           {selectedProduct && (
-            <div className="flex items-center gap-2 bg-steam-darker border border-steam-blue/40 rounded-steam px-3 py-2">
+            <div className="flex items-center gap-2 bg-scout-bg border border-scout-accent/40 rounded-scout px-3 py-2">
               <div className="flex-1 min-w-0">
-                <p className="truncate text-sm font-semibold text-steam-light">{selectedProduct.name}</p>
+                <p className="truncate text-sm font-semibold text-scout-text">{selectedProduct.name}</p>
                 {selectedProduct.best_offer && (
-                  <p className="text-xs text-steam-green font-bold">{formatPrice(selectedProduct.best_offer.price)}</p>
+                  <p className="text-xs text-scout-success font-bold">{formatPrice(selectedProduct.best_offer.price)}</p>
                 )}
               </div>
             </div>
           )}
 
           <div>
-            <label className="text-[10px] uppercase tracking-wider text-steam-muted">Количество</label>
+            <label className="text-[10px] uppercase tracking-wider text-scout-muted">Количество</label>
             <Input
               type="number"
               min="1"
@@ -326,11 +326,11 @@ export default function WishlistPage() {
           </div>
 
           <div>
-            <label className="text-[10px] uppercase tracking-wider text-steam-muted">Заметка</label>
+            <label className="text-[10px] uppercase tracking-wider text-scout-muted">Заметка</label>
             <textarea
               value={note}
               onChange={e => setNote(e.target.value)}
-              className="mt-1 w-full rounded-steam border border-steam-border bg-steam-darker px-3 py-2 text-sm text-steam-light placeholder-steam-muted focus:border-steam-blue focus:outline-none"
+              className="mt-1 w-full rounded-scout border border-scout-border bg-scout-bg px-3 py-2 text-sm text-scout-text placeholder-scout-muted focus:border-scout-accent focus:outline-none"
               rows={2}
               placeholder="Например, нужна версия 16 ГБ..."
             />

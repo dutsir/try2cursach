@@ -19,17 +19,17 @@ export default function Notifications() {
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <Bell size={28} className="text-brand-400" />
+        <Bell size={28} className="text-scout-accent" />
         <div>
-          <h1 className="text-3xl font-bold text-white">Уведомления</h1>
-          <p className="text-sm text-white/50">История оповещений</p>
+          <h1 className="text-3xl font-bold text-scout-text">Уведомления</h1>
+          <p className="text-sm text-scout-muted">История оповещений</p>
         </div>
       </motion.div>
 
       {isLoading ? (
         <PageSpinner />
       ) : !data?.results.length ? (
-        <div className="flex flex-col items-center gap-3 py-24 text-white/40">
+        <div className="flex flex-col items-center gap-3 py-24 text-scout-dim">
           <Bell size={56} strokeWidth={1} />
           <p className="text-xl">Уведомлений нет</p>
         </div>
@@ -43,12 +43,12 @@ export default function Notifications() {
               transition={{ delay: i * 0.04 }}
             >
               <Card className="flex items-start gap-4 p-5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600/20">
-                  <CheckCircle size={18} className="text-emerald-400" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-scout-lg bg-scout-success/15">
+                  <CheckCircle size={18} className="text-scout-success" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white">{n.message}</p>
-                  <p className="mt-1 text-xs text-white/40">{formatRelativeDate(n.sent_at)}</p>
+                  <p className="text-sm text-scout-text">{n.message}</p>
+                  <p className="mt-1 text-xs text-scout-dim">{formatRelativeDate(n.sent_at)}</p>
                 </div>
               </Card>
             </motion.div>

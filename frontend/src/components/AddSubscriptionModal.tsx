@@ -74,26 +74,26 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
             )}
 
             {data?.results && query.length > 1 && (
-              <ul className="max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-white/5">
+              <ul className="max-h-56 overflow-y-auto rounded-scout border border-scout-subtle bg-scout-bg">
                 {data.results.map(product => (
-                  <li key={product.id}>
+                  <li key={product.id} className="border-b border-scout-subtle last:border-0">
                     <button
                       onClick={() => {
                         setSelected(product)
                         setQuery(product.name)
                         if (!targetPrice) setTargetPrice(suggestedPrice || '')
                       }}
-                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-white/10"
+                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-scout-subtle"
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="truncate text-sm font-medium text-white">{product.name}</p>
+                        <p className="truncate text-sm font-medium text-scout-text">{product.name}</p>
                         {product.brand && (
-                          <p className="text-xs text-white/40">{product.brand}</p>
+                          <p className="text-xs text-scout-dim">{product.brand}</p>
                         )}
                       </div>
                       {product.best_offer && (
                         <div className="flex shrink-0 flex-col items-end gap-1">
-                          <span className="text-sm font-semibold text-white">
+                          <span className="text-sm font-semibold text-scout-text scout-tabnums">
                             {formatPrice(product.best_offer.price)}
                           </span>
                           <Badge variant="ghost">
@@ -105,7 +105,7 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
                   </li>
                 ))}
                 {data.results.length === 0 && (
-                  <li className="px-4 py-6 text-center text-sm text-white/40">
+                  <li className="px-4 py-6 text-center text-sm text-scout-dim">
                     Ничего не найдено
                   </li>
                 )}
@@ -115,11 +115,11 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
         )}
 
         {selected && (
-          <div className="flex items-center gap-2 rounded-xl bg-brand-600/20 px-4 py-3">
-            <CheckCircle size={16} className="text-brand-400 shrink-0" />
-            <span className="flex-1 text-sm text-white line-clamp-1">{selected.name}</span>
+          <div className="flex items-center gap-2 rounded-scout border border-scout-accent/30 bg-scout-accent/10 px-4 py-3">
+            <CheckCircle size={16} className="shrink-0 text-scout-accent" />
+            <span className="line-clamp-1 flex-1 text-sm text-scout-text">{selected.name}</span>
             {selected.best_offer && (
-              <span className="shrink-0 text-sm text-brand-300">
+              <span className="shrink-0 text-sm text-scout-accent scout-tabnums">
                 {formatPrice(selected.best_offer.price)}
               </span>
             )}
@@ -127,7 +127,7 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
         )}
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-white/60">Целевая цена (₽)</label>
+          <label className="scout-caption">Целевая цена (₽)</label>
           <Input
             type="number"
             placeholder={suggestedPrice ? `Напр. ${suggestedPrice}` : 'Введите цену...'}
@@ -135,7 +135,7 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
             onChange={e => setTargetPrice(e.target.value)}
           />
           {selected?.best_offer && selected.best_offer.price && targetPrice && (
-            <p className="text-xs text-white/40">
+            <p className="text-xs text-scout-dim">
               Текущая цена: {formatPrice(selected.best_offer.price)} —{' '}
               скидка {Math.round((1 - parseFloat(targetPrice) / selected.best_offer.price) * 100)}%
             </p>
