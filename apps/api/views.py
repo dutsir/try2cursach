@@ -721,8 +721,135 @@ def register(request: Request) -> Response:
         user = serializer.save()
         Wishlist.objects.create(user=user)
         login(request, user)
+        # Отправляем письмо верификации; тихо игнорируем ошибку SMTP —
+        # регистрация должна пройти даже если почта не настроена.
+        try:
+            from apps.alerts.email_notify import send_verification_email
+            send_verification_email(user)
+        except Exception:
+            pass
         return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def verify_email(request: Request) -> Response:
+    """Подтверждает email по токену из письма."""
+    token = request.data.get('token', '').strip()
+    if not token:
+        return Response({'error': 'Токен не указан.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = User.objects.filter(email_verify_token=token, email_verified=False).first()
+    if not user:
+        return Response(
+            {'error': 'Недействительный или уже использованный токен.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Токен действителен 24 часа
+    from django.utils import timezone
+    if user.email_verify_sent_at:
+        age = timezone.now() - user.email_verify_sent_at
+        if age.total_seconds() > 86_400:
+            return Response(
+                {'error': 'Ссылка устарела. Запросите новое письмо.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    user.email_verified = True
+    user.email_verify_token = ''
+    user.save(update_fields=['email_verified', 'email_verify_token'])
+    return Response({'ok': True, 'message': 'Email успешно подтверждён.'})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def resend_verification(request: Request) -> Response:
+    """Повторно отправляет письмо верификации."""
+    user = request.user
+    if user.email_verified:
+        return Response({'error': 'Email уже подтверждён.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    from apps.alerts.email_notify import send_verification_email
+    sent = send_verification_email(user)
+    if sent:
+        return Response({'ok': True, 'message': 'Письмо отправлено.'})
+    # Cooldown ещё не прошёл
+    return Response(
+        {'error': 'Подождите несколько минут перед повторной отправкой.'},
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
+
+
+@ensure_csrf_cookie
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def password_reset_request(request: Request) -> Response:
+    """Запрос на сброс пароля по email.
+
+    Всегда возвращает 200 с одним и тем же сообщением — чтобы не раскрывать,
+    зарегистрирован ли email в системе.
+    """
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.encoding import force_bytes
+    from django.utils.http import urlsafe_base64_encode
+
+    email = request.data.get('email', '').strip()
+    generic = {'ok': True, 'message': 'Если такой email зарегистрирован, мы отправили ссылку для сброса.'}
+    if not email:
+        return Response({'error': 'Укажите email.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = User.objects.filter(email__iexact=email, is_active=True).first()
+    if user:
+        from django.conf import settings as dj_settings
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        site = getattr(dj_settings, 'SITE_URL', '').rstrip('/') or 'http://localhost'
+        reset_url = f'{site}/reset-password?uid={uid}&token={token}'
+        try:
+            from apps.alerts.email_notify import send_password_reset_email
+            send_password_reset_email(user, reset_url)
+        except Exception:
+            logger.exception('Password reset email failed for %s', email)
+
+    return Response(generic)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def password_reset_confirm(request: Request) -> Response:
+    """Устанавливает новый пароль по uid + token из письма."""
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.encoding import force_str
+    from django.utils.http import urlsafe_base64_decode
+
+    uid = request.data.get('uid', '')
+    token = request.data.get('token', '')
+    password = request.data.get('password', '')
+    password_confirm = request.data.get('password_confirm', '')
+
+    if not uid or not token:
+        return Response({'error': 'Недействительная ссылка.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(password) < 8:
+        return Response({'error': 'Пароль должен быть не короче 8 символов.'}, status=status.HTTP_400_BAD_REQUEST)
+    if password != password_confirm:
+        return Response({'error': 'Пароли не совпадают.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uid)))
+    except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+        user = None
+
+    if user is None or not default_token_generator.check_token(user, token):
+        return Response(
+            {'error': 'Ссылка недействительна или устарела. Запросите сброс заново.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user.set_password(password)
+    user.save(update_fields=['password'])
+    return Response({'ok': True, 'message': 'Пароль изменён. Теперь войдите с новым паролем.'})
 
 
 @ensure_csrf_cookie
@@ -739,6 +866,12 @@ def login_view(request: Request) -> Response:
         )
 
     user = authenticate(request, username=username, password=password)
+    # Форма логина допускает ввод email — если по username не вышло
+    # и это похоже на email, ищем пользователя по почте.
+    if user is None and '@' in username:
+        match = User.objects.filter(email__iexact=username).first()
+        if match:
+            user = authenticate(request, username=match.username, password=password)
     if user is None:
         return Response(
             {'error': 'Invalid credentials'},
@@ -762,8 +895,8 @@ def logout_view(request: Request) -> Response:
 def me_view(request: Request) -> Response:
     user = request.user
     if request.method == 'PATCH':
-        # Разрешаем менять только безопасные поля профиля и настройку уведомлений.
-        allowed = {'first_name', 'last_name', 'notify_telegram'}
+        # Разрешаем менять только безопасные поля профиля и настройки уведомлений.
+        allowed = {'first_name', 'last_name', 'notify_telegram', 'notify_email'}
         fields = []
         for key in allowed:
             if key in request.data:

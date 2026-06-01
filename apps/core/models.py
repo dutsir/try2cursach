@@ -32,6 +32,16 @@ class User(AbstractUser):
     telegram_linked_at = models.DateTimeField('Telegram привязан', null=True, blank=True)
     notify_telegram = models.BooleanField('Дублировать уведомления в Telegram', default=False)
 
+    # Email-уведомления
+    notify_email = models.BooleanField('Дублировать уведомления на email', default=True)
+
+    # Верификация email
+    email_verified = models.BooleanField('Email подтверждён', default=False, db_index=True)
+    email_verify_token = models.CharField(
+        'Токен верификации', max_length=64, blank=True, default='', db_index=True,
+    )
+    email_verify_sent_at = models.DateTimeField('Письмо отправлено', null=True, blank=True)
+
     class Meta:
         verbose_name = 'Пользователь'
         verbose_name_plural = 'Пользователи'

@@ -22,6 +22,9 @@ const Notifications = lazy(() => import('@/pages/Notifications'))
 const Settings      = lazy(() => import('@/pages/Settings'))
 const Login         = lazy(() => import('@/pages/Login'))
 const Register      = lazy(() => import('@/pages/Register'))
+const VerifyEmail   = lazy(() => import('@/pages/VerifyEmail'))
+const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
+const ResetPassword  = lazy(() => import('@/pages/ResetPassword'))
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -93,8 +96,9 @@ export default function App() {
           <Suspense fallback={<PageSpinner />}>
             <Routes>
               {/* Auth routes — no layout */}
-              <Route path="/login"    element={user ? <Navigate to="/" /> : <Login    onLogin={setUser} />} />
-              <Route path="/register" element={user ? <Navigate to="/" /> : <Register onRegister={setUser} />} />
+              <Route path="/login"        element={user ? <Navigate to="/" /> : <Login    onLogin={setUser} />} />
+              <Route path="/register"     element={user ? <Navigate to="/" /> : <Register onRegister={setUser} />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
 
               {/* Protected routes — all under Scout layout */}
               <Route element={

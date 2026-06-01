@@ -69,7 +69,9 @@ services:
       RABBITMQ_HOST: rabbitmq
       REDIS_HOST: redis
     ports:
-      - "8000:8000"
+      # По умолчанию 8000 слушает только localhost (наружу не торчит).
+      # Фронт ходит на web по внутренней сети (http://web:8000), хост-порт ему не нужен.
+      - "${WEB_BIND_ADDR:-127.0.0.1}:8000:8000"
     volumes:
       - .:/app
       - static_volume:/app/staticfiles
@@ -86,6 +88,7 @@ services:
     command: >
       sh -c "python manage.py migrate &&
              python manage.py seed_categories --update &&
+             python manage.py collectstatic --noinput &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
 
   # Тяжёлый воркер: Selenium + Chrome (DNS, Citilink, Ozon).
@@ -182,8 +185,47 @@ services:
         reservations:
           memory: 512m
 
+  # Лёгкий воркер для VPS (site-only + WB-парсер).
+  # Без Chrome/Xvfb/torch. DEDUP_EMBEDDING_ENABLED=0 в .env → embedding пропускается.
+  # Запускается через: docker compose --profile vps-celery up -d
+  celery-worker-vps:
+    profiles: ["vps-celery"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery-light
+    container_name: pm_celery_worker_vps
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+    command: >
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${CELERY_LIGHT_CONCURRENCY:-2}
+      -Q parsing_light,default
+      --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-20}
+      --time-limit=${CELERY_LIGHT_TIME_LIMIT:-600}
+      --soft-time-limit=${CELERY_LIGHT_SOFT_TIME_LIMIT:-540}
+      --hostname=vps@%h
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${CELERY_LIGHT_MEM_LIMIT:-1500m}
+        reservations:
+          memory: 256m
+
   celery-beat:
-    profiles: ["docker-celery"]
+    profiles: ["docker-celery", "vps-celery"]
     build:
       context: .
       dockerfile: docker/Dockerfile.celerybeat
@@ -211,7 +253,10 @@ services:
     container_name: pm_frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      # Dev: 0.0.0.0:80. Прод за TLS-прокси на хосте (nginx+certbot/Caddy):
+      # FRONTEND_BIND_ADDR=127.0.0.1 FRONTEND_PORT=8080 — фронт слушает только
+      # localhost, хостовый прокси терминирует HTTPS и проксирует на него.
+      - "${FRONTEND_BIND_ADDR:-0.0.0.0}:${FRONTEND_PORT:-80}:80"
     depends_on:
       - web
     environment:

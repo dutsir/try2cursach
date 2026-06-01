@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { productsApi } from '@/api/products'
 import { dashboardApi } from '@/api/dashboard'
 import { Spinner } from '@/components/ui/Spinner'
@@ -18,6 +18,7 @@ import {
   type Verdict,
   type MarketplaceSource,
 } from '@/components/scout'
+import { cn } from '@/lib/utils'
 import type { Product } from '@/types'
 
 function toScoutCard(p: Product): ScoutProductCardData {
@@ -69,11 +70,18 @@ export default function Dashboard() {
 
   const [view, setView] = useState<DashView>('grid')
   const [filter, setFilter] = useState<DashFilter>('all')
+  const [catSlug, setCatSlug] = useState<string | null>(null)
 
   const { data: products, isLoading } = useQuery({
-    queryKey: ['products', { page_size: 24, ordering: '-last_parsed_at' }],
-    queryFn: () => productsApi.list({ page_size: 24, ordering: '-last_parsed_at' }),
+    queryKey: ['products', { page_size: 24, ordering: '-last_parsed_at', category_slug: catSlug }],
+    queryFn: () =>
+      productsApi.list({
+        page_size: 24,
+        ordering: '-last_parsed_at',
+        ...(catSlug ? { category_slug: catSlug } : {}),
+      }),
     staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
 
   const { data: dash } = useQuery({
@@ -81,6 +89,8 @@ export default function Dashboard() {
     queryFn: dashboardApi.get,
     staleTime: 5 * 60_000,
   })
+
+  const categories = dash?.popular_categories ?? []
 
   const cards: ScoutProductCardData[] = useMemo(
     () => (products?.results ?? []).map(toScoutCard),
@@ -106,7 +116,7 @@ export default function Dashboard() {
     )
   }
 
-  if (cards.length === 0) {
+  if (cards.length === 0 && catSlug === null) {
     return <EmptyDash />
   }
 
@@ -123,6 +133,37 @@ export default function Dashboard() {
       />
 
       <DashStats tracked={totalTracked} offersCount={totalOffers} />
+
+      {categories.length > 0 && (
+        <div className="mb-6 flex flex-wrap gap-2">
+          <button
+            onClick={() => setCatSlug(null)}
+            className={cn(
+              'rounded-scout px-3 py-1.5 text-[13px] font-medium transition-colors border',
+              catSlug === null
+                ? 'bg-scout-accent text-scout-text border-scout-accent'
+                : 'bg-scout-elevated text-scout-muted border-scout-subtle hover:text-scout-text hover:border-scout-border',
+            )}
+          >
+            Все
+          </button>
+          {categories.map(c => (
+            <button
+              key={c.slug}
+              onClick={() => setCatSlug(c.slug)}
+              className={cn(
+                'rounded-scout px-3 py-1.5 text-[13px] font-medium transition-colors border inline-flex items-center gap-1.5',
+                catSlug === c.slug
+                  ? 'bg-scout-accent text-scout-text border-scout-accent'
+                  : 'bg-scout-elevated text-scout-muted border-scout-subtle hover:text-scout-text hover:border-scout-border',
+              )}
+            >
+              {c.name}
+              <span className="text-[11px] text-scout-dim scout-tabnums">{c.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {view === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

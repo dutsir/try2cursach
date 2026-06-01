@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Settings as SettingsIcon, Send, Link2, Unlink, Copy, Check } from 'lucide-react'
+import { Settings as SettingsIcon, Send, Link2, Unlink, Copy, Check, Mail, RefreshCw, CheckCircle } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -16,10 +17,27 @@ interface SettingsProps {
 
 export default function Settings({ user, onUserChange }: SettingsProps) {
   const { toast } = useToast()
+  const qc = useQueryClient()
 
   const [firstName, setFirstName] = useState(user?.first_name ?? '')
   const [lastName, setLastName] = useState(user?.last_name ?? '')
   const [savingProfile, setSavingProfile] = useState(false)
+
+  const resendVerify = useMutation({
+    mutationFn: () => accountApi.resendVerification(),
+    onSuccess: () => toast('Письмо отправлено — проверьте почту', 'success'),
+    onError: (err: any) => toast(err?.response?.data?.error ?? 'Не удалось отправить письмо', 'error'),
+  })
+
+  const toggleNotifyEmail = async (value: boolean) => {
+    try {
+      const updated = await accountApi.updateProfile({ notify_email: value })
+      onUserChange(updated)
+      qc.invalidateQueries({ queryKey: ['me'] })
+    } catch {
+      toast('Не удалось изменить настройку', 'error')
+    }
+  }
 
   const [tg, setTg] = useState<TelegramStatus | null>(null)
   const [linkInfo, setLinkInfo] = useState<TelegramLinkInfo | null>(null)
@@ -141,6 +159,53 @@ export default function Settings({ user, onUserChange }: SettingsProps) {
             <div>
               <Button onClick={saveProfile} loading={savingProfile}>Сохранить</Button>
             </div>
+          </div>
+        </Card>
+
+        {/* Email */}
+        <Card className="p-6">
+          <div className="flex items-center gap-2">
+            <Mail size={18} className="text-scout-accent" />
+            <h2 className="text-lg font-semibold text-scout-text">Email-уведомления</h2>
+          </div>
+          <p className="mt-1 text-sm text-scout-muted">
+            Дублирование уведомлений о ценах на почту.
+          </p>
+
+          <div className="mt-4 flex flex-col gap-4">
+            {/* Статус верификации */}
+            {user?.email_verified ? (
+              <div className="flex items-center gap-2 rounded-scout border border-scout-success/30 bg-scout-success/10 px-3 py-2 text-sm text-scout-success">
+                <CheckCircle size={15} />
+                Почта подтверждена: {user.email}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 rounded-scout border border-scout-warning/30 bg-scout-warning/10 px-3 py-2">
+                <p className="text-sm text-scout-warning">
+                  Почта не подтверждена — уведомления не придут.
+                </p>
+                <Button
+                  variant="secondary"
+                  onClick={() => resendVerify.mutate()}
+                  loading={resendVerify.isPending}
+                  className="w-fit"
+                >
+                  <RefreshCw size={14} className="mr-1.5" />
+                  Отправить письмо снова
+                </Button>
+              </div>
+            )}
+
+            {/* Тоггл уведомлений */}
+            <label className="flex cursor-pointer items-center justify-between">
+              <span className="text-sm text-scout-text">Присылать уведомления на email</span>
+              <input
+                type="checkbox"
+                checked={user?.notify_email ?? true}
+                onChange={e => toggleNotifyEmail(e.target.checked)}
+                className="h-4 w-4 cursor-pointer accent-scout-accent"
+              />
+            </label>
           </div>
         </Card>
 

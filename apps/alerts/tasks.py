@@ -24,9 +24,10 @@ def _best_actual_price(product):
 
 
 def _dispatch_notification(sub, message: str, ntype: str) -> None:
-    """Создаёт Notification и дублирует в Telegram, если пользователь подключил."""
+    """Создаёт Notification и дублирует в Telegram/Email, если пользователь подключил."""
     from .models import Notification
     from .telegram import send_message
+    from .email_notify import send_notification_email
 
     Notification.objects.create(
         user=sub.user,
@@ -39,8 +40,19 @@ def _dispatch_notification(sub, message: str, ntype: str) -> None:
     sub.save(update_fields=['last_notified_at', 'updated_at'])
 
     user = sub.user
+
+    # Telegram
     if user.notify_telegram and user.telegram_chat_id:
         send_message(user.telegram_chat_id, message)
+
+    # Email
+    type_labels = {
+        'price_drop': 'Цена достигла цели',
+        'anomaly': 'Резкое снижение цены',
+        'availability': 'Товар появился в наличии',
+    }
+    subject = type_labels.get(ntype, 'Уведомление о цене')
+    send_notification_email(user, subject, message)
 
 
 @shared_task

@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Только базовые системные зависимости — без Chrome, без Xvfb, без GUI-библиотек.
+# Этот образ для лёгкого воркера (WB HTTP-парсер + подписки/уведомления на VPS).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    libpq-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/requirements-light.txt /app/requirements-light.txt
+
+# Только CPU-deps без torch (sentence-transformers исключён → torch не тянется).
+# При DEDUP_EMBEDDING_ENABLED=0 embedding-код не вызывается совсем.
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        --timeout=300 \
+        --retries=10 \
+        -r requirements-light.txt
+
+COPY . /app/
+
+# Fallback-команда (в docker-compose переопределяется через command:)
+CMD ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=2", "-Q", "parsing_light,default"]

@@ -1,0 +1,18 @@
+# VPS-override: облегчает web и celery-beat (без torch/sentence-transformers/Chrome).
+# Базовый docker-compose.yml собирает web из Dockerfile.web (ставит torch с
+# download.pytorch.org — недоступен с РФ-VPS и раздувает образ). На VPS embedding
+# отключён (DEDUP_EMBEDDING_ENABLED=0), поэтому web и beat работают на requirements-light.
+#
+# Запуск:
+#   docker compose -f docker-compose.yml -f docker-compose.vps.yml --profile vps-celery up -d --build
+services:
+  web:
+    build:
+      dockerfile: docker/Dockerfile.web-light
+
+  celery-beat:
+    build:
+      dockerfile: docker/Dockerfile.celery-light
+    command: >
+      celery -A config beat --loglevel=info
+      --scheduler django_celery_beat.schedulers:DatabaseScheduler

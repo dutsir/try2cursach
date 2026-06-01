@@ -1,0 +1,34 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Лёгкий web-образ для VPS: Django/gunicorn без torch/sentence-transformers и без Chrome.
+# Используется при DEDUP_EMBEDDING_ENABLED=0 — embedding-код не вызывается, а его импорт
+# (apps/products/dedupe/embedding.py) ленивый и заглушает ImportError, поэтому приложение
+# стартует без torch. AI-сравнения (Gemini) идут по HTTP через requests.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    libpq-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/requirements-light.txt /app/requirements-light.txt
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        --timeout=600 \
+        --retries=20 \
+        -r requirements-light.txt
+
+COPY . /app/
+
+RUN python manage.py collectstatic --noinput || true
+
+EXPOSE 8000
+
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]

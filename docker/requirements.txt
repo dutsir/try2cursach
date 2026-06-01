@@ -16,6 +16,7 @@ django-redis==5.4.0
 redis==5.2.1
 
 gunicorn==23.0.0
+whitenoise==6.8.2
 
 selenium==4.27.1
 undetected-chromedriver==3.5.5

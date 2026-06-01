@@ -189,8 +189,9 @@ class UserSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'username', 'email', 'first_name', 'last_name', 'avatar',
             'accepted_terms', 'notify_telegram', 'telegram_linked', 'telegram_username',
+            'email_verified', 'notify_email',
         )
-        read_only_fields = ('id', 'accepted_terms', 'telegram_linked', 'telegram_username')
+        read_only_fields = ('id', 'accepted_terms', 'telegram_linked', 'telegram_username', 'email_verified')
 
 
 class UserRegisterSerializer(serializers.ModelSerializer):

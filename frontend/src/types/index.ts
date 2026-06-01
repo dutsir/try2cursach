@@ -11,6 +11,8 @@ export interface User {
   notify_telegram?: boolean
   telegram_linked?: boolean
   telegram_username?: string
+  email_verified?: boolean
+  notify_email?: boolean
 }
 
 export interface Category {

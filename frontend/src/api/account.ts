@@ -18,7 +18,7 @@ export interface TelegramStatus {
 export const accountApi = {
   me: () => api.get<User>('/api/auth/me/'),
 
-  updateProfile: (data: Partial<Pick<User, 'first_name' | 'last_name' | 'notify_telegram'>>) =>
+  updateProfile: (data: Partial<Pick<User, 'first_name' | 'last_name' | 'notify_telegram' | 'notify_email'>>) =>
     api.patch<User>('/api/auth/me/', data),
 
   telegramStatus: () => api.get<TelegramStatus>('/api/telegram/status/'),
@@ -26,4 +26,18 @@ export const accountApi = {
   telegramLink: () => api.post<TelegramLinkInfo>('/api/telegram/link/', {}),
 
   telegramUnlink: () => api.post<{ linked: boolean }>('/api/telegram/unlink/', {}),
+
+  verifyEmail: (token: string) =>
+    api.post<{ ok: boolean; message: string }>('/api/auth/verify-email/', { token }),
+
+  resendVerification: () =>
+    api.post<{ ok: boolean; message: string }>('/api/auth/resend-verification/', {}),
+
+  requestPasswordReset: (email: string) =>
+    api.post<{ ok: boolean; message: string }>('/api/auth/password-reset/', { email }),
+
+  confirmPasswordReset: (uid: string, token: string, password: string, password_confirm: string) =>
+    api.post<{ ok: boolean; message: string }>('/api/auth/password-reset-confirm/', {
+      uid, token, password, password_confirm,
+    }),
 }

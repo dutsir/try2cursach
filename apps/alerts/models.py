@@ -40,6 +40,7 @@ class Subscription(BaseModel):
         verbose_name = 'Подписка'
         verbose_name_plural = 'Подписки'
         unique_together = ('user', 'product')
+        ordering = ['-created_at']
 
     def __str__(self) -> str:
         return f'{self.user} → {self.product.name} (≤ {self.target_price}₽)'

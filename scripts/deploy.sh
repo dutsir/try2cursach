@@ -1,23 +1,54 @@
 #!/usr/bin/env bash
+# Деплой на VPS.
+# Режимы:
+#   DEPLOY_MODE=site      — только web + frontend (по умолчанию)
+#   DEPLOY_MODE=site+wb   — web + frontend + WB-парсер (лёгкий celery + beat)
+#
+# Использование:
+#   PROJECT_DIR=/opt/price_monitor bash scripts/deploy.sh
+#   DEPLOY_MODE=site+wb PROJECT_DIR=/opt/price_monitor bash scripts/deploy.sh
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/opt/price_monitor}"
+DEPLOY_MODE="${DEPLOY_MODE:-site}"
 cd "$PROJECT_DIR"
+
+# Создаём внешний Docker volume для БД, если его ещё нет.
+# (docker compose down -v НЕ удаляет external-volumes — данные в безопасности)
+if ! docker volume inspect pm_postgres_data &>/dev/null; then
+    echo "[$(date)] Создаём volume pm_postgres_data…"
+    docker volume create pm_postgres_data
+fi
 
 echo "[$(date)] Pulling latest code…"
 git pull --ff-only
 
-echo "[$(date)] Rebuilding containers…"
-docker compose build
-
-echo "[$(date)] Applying migrations…"
-docker compose run --rm web python manage.py migrate
-
-echo "[$(date)] Seeding categories…"
-docker compose run --rm web python manage.py seed_categories --update
+if [[ "$DEPLOY_MODE" == "site+wb" ]]; then
+    echo "[$(date)] Rebuilding containers (web + frontend + celery-light)…"
+    docker compose build web frontend celery-worker-vps celery-beat
+else
+    echo "[$(date)] Rebuilding containers (web + frontend only)…"
+    docker compose build web frontend
+fi
 
 echo "[$(date)] Restarting services…"
-docker compose up -d
+if [[ "$DEPLOY_MODE" == "site+wb" ]]; then
+    # up -d поднимает сервисы без profile (postgres, redis, rabbitmq, web, frontend)
+    # + profile vps-celery (celery-worker-vps + celery-beat).
+    docker compose --profile vps-celery up -d
+else
+    # Только базовые сервисы без Celery.
+    docker compose up -d
+fi
+
+echo "[$(date)] Waiting for web to be ready…"
+for i in $(seq 1 15); do
+    if docker compose exec -T web python manage.py check --deploy --fail-level ERROR 2>/dev/null; then
+        break
+    fi
+    echo "  [${i}/15] waiting…"
+    sleep 3
+done
 
 echo "[$(date)] Deploy complete."
 docker compose ps

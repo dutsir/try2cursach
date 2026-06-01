@@ -25,13 +25,16 @@ CSRF_TRUSTED_ORIGINS = [
     if x.strip()
 ]
 
+# На проде задать CORS_ALLOWED_ORIGINS=https://example.com (через запятую).
+# Дефолт — localhost для dev.
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost',
-    'http://localhost:5173',
-    'http://localhost:8000',
-    'http://127.0.0.1',
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:8000',
+    x.strip()
+    for x in os.getenv(
+        'CORS_ALLOWED_ORIGINS',
+        'http://localhost,http://localhost:5173,http://localhost:8000,'
+        'http://127.0.0.1,http://127.0.0.1:5173,http://127.0.0.1:8000',
+    ).split(',')
+    if x.strip()
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -61,6 +64,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise отдаёт /static/ при DEBUG=0 (админка, DRF browsable API).
+    # Должен идти сразу после SecurityMiddleware.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -122,6 +128,14 @@ STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# WhiteNoise: сжатие + хэш-манифест для статики в проде.
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -426,6 +440,25 @@ AI_COMPARE_CACHE_TTL = int(os.getenv('AI_COMPARE_CACHE_TTL', '86400'))
 SUBSCRIPTION_NOTIFY_COOLDOWN_HOURS = int(os.getenv('SUBSCRIPTION_NOTIFY_COOLDOWN_HOURS', '24'))
 
 
+# === Email (SMTP + верификация + уведомления) ===
+# В dev EMAIL_BACKEND=console → письма печатаются в stdout, SMTP не нужен.
+# В проде задать EMAIL_HOST/PORT/USER/PASSWORD (Gmail, Yandex, Mailgun, etc.)
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend' if DEBUG
+    else 'django.core.mail.backends.smtp.EmailBackend',
+)
+EMAIL_HOST = os.getenv('EMAIL_HOST', '')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', '1') == '1'
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', '0') == '1'
+DEFAULT_FROM_EMAIL = os.getenv('EMAIL_FROM', 'Scout <noreply@example.com>')
+# Базовый URL сайта — подставляется в ссылки письма (без слеша на конце).
+SITE_URL = os.getenv('SITE_URL', 'http://localhost').rstrip('/')
+
+
 # === Telegram-дублирование уведомлений ===
 # Бот не умеет писать по @username — нужен chat_id. Его ловим polling'ом
 # getUpdates (periodic Celery-задача), когда пользователь пишет боту код привязки.
@@ -446,3 +479,22 @@ CSRF_COOKIE_SAMESITE = os.getenv('CSRF_COOKIE_SAMESITE', 'Lax')
 CSRF_COOKIE_HTTPONLY = False
 SESSION_COOKIE_SECURE = not DEBUG and os.getenv('COOKIE_SECURE', '1') == '1'
 CSRF_COOKIE_SECURE = not DEBUG and os.getenv('COOKIE_SECURE', '1') == '1'
+
+# За TLS-терминатором (Caddy/nginx) Django видит HTTP. Доверяем X-Forwarded-Proto,
+# чтобы request.is_secure() == True и Secure-cookies/redirect'ы работали корректно.
+if os.getenv('USE_PROXY_SSL_HEADER', '1') == '1':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# HSTS: браузер запоминает "только HTTPS" на заданный срок.
+# Задать SECURE_HSTS_SECONDS=31536000 после того как HTTPS точно работает.
+# ВНИМАНИЕ: нельзя откатить без ожидания истечения срока — включать постепенно.
+SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', '0') == '1'
+SECURE_HSTS_PRELOAD = os.getenv('SECURE_HSTS_PRELOAD', '0') == '1'
+
+# SSL-редирект делает хостовый nginx, а не Django — иначе будет двойной редирект.
+SECURE_SSL_REDIRECT = False
+
+# Заглушаем W008: "SSL redirect не включён". Он делается на уровне nginx-прокси,
+# и включать его в Django за reverse-proxy неправильно (петля редиректов).
+SILENCED_SYSTEM_CHECKS = ['security.W008']

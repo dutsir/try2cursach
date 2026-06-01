@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { DashNav } from './DashNav'
 import { DashSidebar } from './DashSidebar'
 import { AddProductModal } from './AddProductModal'
+import { EmailVerifyBanner } from '@/components/EmailVerifyBanner'
 import { notificationsApi, subscriptionsApi } from '@/api/subscriptions'
 import { productsApi } from '@/api/products'
 import { wishlistApi } from '@/api/wishlist'
@@ -65,6 +66,7 @@ export function ScoutLayout({ user, children, onLogout }: ScoutLayoutProps) {
         onAddProduct={() => setModalOpen(true)}
         onLogout={onLogout}
       />
+      {user && <EmailVerifyBanner user={user} />}
       <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] min-h-[calc(100vh-64px)]">
         <div className="hidden lg:block">
           <DashSidebar
