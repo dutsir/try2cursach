@@ -1,0 +1,233 @@
+import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
+import { Settings as SettingsIcon, Send, Link2, Unlink, Copy, Check } from 'lucide-react'
+import { Card } from '@/components/ui/Card'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { useToast } from '@/components/ui/Toast'
+import { accountApi, type TelegramLinkInfo, type TelegramStatus } from '@/api/account'
+import { ApiError } from '@/api/client'
+import type { User } from '@/types'
+
+interface SettingsProps {
+  user: User | null
+  onUserChange: (user: User) => void
+}
+
+export default function Settings({ user, onUserChange }: SettingsProps) {
+  const { toast } = useToast()
+
+  const [firstName, setFirstName] = useState(user?.first_name ?? '')
+  const [lastName, setLastName] = useState(user?.last_name ?? '')
+  const [savingProfile, setSavingProfile] = useState(false)
+
+  const [tg, setTg] = useState<TelegramStatus | null>(null)
+  const [linkInfo, setLinkInfo] = useState<TelegramLinkInfo | null>(null)
+  const [tgLoading, setTgLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    accountApi.telegramStatus().then(setTg).catch(() => {})
+  }, [])
+
+  const saveProfile = async () => {
+    setSavingProfile(true)
+    try {
+      const updated = await accountApi.updateProfile({ first_name: firstName, last_name: lastName })
+      onUserChange(updated)
+      toast('Профиль сохранён', 'success')
+    } catch {
+      toast('Не удалось сохранить профиль', 'error')
+    } finally {
+      setSavingProfile(false)
+    }
+  }
+
+  const toggleNotifyTelegram = async (value: boolean) => {
+    try {
+      const updated = await accountApi.updateProfile({ notify_telegram: value })
+      onUserChange(updated)
+      setTg(prev => (prev ? { ...prev, notify_telegram: value } : prev))
+    } catch {
+      toast('Не удалось изменить настройку', 'error')
+    }
+  }
+
+  const startLink = async () => {
+    setTgLoading(true)
+    try {
+      const info = await accountApi.telegramLink()
+      setLinkInfo(info)
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 503) {
+        toast('Telegram-интеграция отключена на сервере', 'error')
+      } else {
+        toast('Не удалось получить код привязки', 'error')
+      }
+    } finally {
+      setTgLoading(false)
+    }
+  }
+
+  const refreshStatus = async () => {
+    const status = await accountApi.telegramStatus().catch(() => null)
+    if (status) {
+      setTg(status)
+      if (status.linked) {
+        setLinkInfo(null)
+        toast('Telegram привязан', 'success')
+      } else {
+        toast('Пока не вижу привязки. Отправьте боту код и попробуйте снова.', 'info')
+      }
+    }
+  }
+
+  const unlink = async () => {
+    setTgLoading(true)
+    try {
+      await accountApi.telegramUnlink()
+      setTg({ linked: false, telegram_username: '', notify_telegram: false })
+      setLinkInfo(null)
+      if (user) onUserChange({ ...user, telegram_linked: false, telegram_username: '', notify_telegram: false })
+      toast('Telegram отвязан', 'success')
+    } catch {
+      toast('Не удалось отвязать Telegram', 'error')
+    } finally {
+      setTgLoading(false)
+    }
+  }
+
+  const copyCode = () => {
+    if (!linkInfo) return
+    navigator.clipboard.writeText(`/start ${linkInfo.code}`).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <>
+      <motion.div
+        className="mb-8 flex items-center gap-3"
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <SettingsIcon size={28} className="text-scout-accent" />
+        <div>
+          <h1 className="text-3xl font-bold text-scout-text">Настройки</h1>
+          <p className="text-sm text-scout-muted">Профиль и уведомления</p>
+        </div>
+      </motion.div>
+
+      <div className="flex max-w-2xl flex-col gap-6">
+        {/* Профиль */}
+        <Card className="p-6">
+          <h2 className="text-lg font-semibold text-scout-text">Аккаунт</h2>
+          <div className="mt-4 flex flex-col gap-4">
+            <div>
+              <label className="scout-caption mb-2 block">email</label>
+              <Input type="email" value={user?.email ?? ''} disabled />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="scout-caption mb-2 block">имя</label>
+                <Input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Иван" />
+              </div>
+              <div>
+                <label className="scout-caption mb-2 block">фамилия</label>
+                <Input value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Петров" />
+              </div>
+            </div>
+            <div>
+              <Button onClick={saveProfile} loading={savingProfile}>Сохранить</Button>
+            </div>
+          </div>
+        </Card>
+
+        {/* Telegram */}
+        <Card className="p-6">
+          <div className="flex items-center gap-2">
+            <Send size={18} className="text-scout-accent" />
+            <h2 className="text-lg font-semibold text-scout-text">Telegram</h2>
+          </div>
+          <p className="mt-1 text-sm text-scout-muted">
+            Дублирование уведомлений о ценах в Telegram.
+          </p>
+
+          {tg?.linked ? (
+            <div className="mt-4 flex flex-col gap-4">
+              <div className="flex items-center gap-2 rounded-scout border border-scout-success/30 bg-scout-success/10 px-3 py-2 text-sm text-scout-success">
+                <Check size={15} />
+                Привязан{tg.telegram_username ? `: @${tg.telegram_username}` : ''}
+              </div>
+
+              <label className="flex cursor-pointer items-center justify-between">
+                <span className="text-sm text-scout-text">Присылать уведомления в Telegram</span>
+                <input
+                  type="checkbox"
+                  checked={tg.notify_telegram}
+                  onChange={e => toggleNotifyTelegram(e.target.checked)}
+                  className="h-4 w-4 cursor-pointer accent-scout-accent"
+                />
+              </label>
+
+              <div>
+                <Button variant="danger" onClick={unlink} loading={tgLoading}>
+                  <Unlink size={15} className="mr-1.5" />
+                  Отвязать
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 flex flex-col gap-4">
+              {!linkInfo ? (
+                <div>
+                  <Button onClick={startLink} loading={tgLoading}>
+                    <Link2 size={15} className="mr-1.5" />
+                    Подключить Telegram
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 rounded-scout border border-scout-subtle bg-scout-bg p-4">
+                  <p className="text-sm text-scout-text">{linkInfo.instructions}</p>
+
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 rounded-scout border border-scout-subtle bg-scout-elevated px-3 py-2 text-sm text-scout-accent">
+                      /start {linkInfo.code}
+                    </code>
+                    <button
+                      onClick={copyCode}
+                      className="rounded-scout border border-scout-subtle p-2 text-scout-muted transition-colors hover:text-scout-text"
+                      title="Скопировать"
+                    >
+                      {copied ? <Check size={16} className="text-scout-success" /> : <Copy size={16} />}
+                    </button>
+                  </div>
+
+                  {linkInfo.deep_link && (
+                    <a
+                      href={linkInfo.deep_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-scout-accent transition-colors hover:text-scout-accent-hover"
+                    >
+                      Открыть бота в Telegram →
+                    </a>
+                  )}
+
+                  <p className="text-xs text-scout-dim">
+                    Код действует {linkInfo.expires_in_minutes} мин. После отправки кода боту нажмите «Проверить».
+                  </p>
+
+                  <div>
+                    <Button variant="secondary" onClick={refreshStatus}>Проверить привязку</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+      </div>
+    </>
+  )
+}

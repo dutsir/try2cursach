@@ -15,7 +15,7 @@ from .audit import enqueue_review, write_audit
 from .embedding import pick_display_name, sync_product_embedding
 from .family_service import attach_product_to_family
 from .features import Features
-from .matcher import MatchResult, find_master
+from .matcher import WITHIN_SOURCE_DEDUP_SOURCES, MatchResult, find_master
 from .normalizer import normalize_offer, normalize_offer_url
 
 logger = logging.getLogger(__name__)
@@ -427,6 +427,39 @@ def _finalize_existing_offer(
     )
 
 
+def _guard_same_source_merge(
+    match: MatchResult,
+    *,
+    src: str,
+    category_id: int,
+) -> MatchResult:
+    """Защита от схлопывания разных товаров одного источника в один Product.
+
+    Дублирует гард из find_master на уровне сервиса (defense-in-depth): если
+    матч ведёт в мастер, у которого уже есть оффер этого же источника, и
+    источник не входит в WITHIN_SOURCE_DEDUP_SOURCES — переопределяем в 'new'.
+    """
+    if match.product is None or match.decision == 'new':
+        return match
+    if src in WITHIN_SOURCE_DEDUP_SOURCES:
+        return match
+    clash = Offer.objects.filter(
+        product_id=match.product.pk, source=src,
+    ).exists()
+    if not clash:
+        return match
+    logger.warning(
+        'upsert_offer[%s]: same-source guard сработал, мастер %s уже имеет '
+        'оффер источника — создаём новый Product вместо мёрджа (score=%.3f)',
+        src, match.product.pk, match.score,
+    )
+    return MatchResult(
+        None, match.score,
+        {**(match.signals or {}), 'same_source_guard': True},
+        'new',
+    )
+
+
 @transaction.atomic
 def upsert_offer(
     *,
@@ -449,6 +482,7 @@ def upsert_offer(
         sku=vendor_code or '',
         url=canonical_url,
         mpn_hint=mpn_hint,
+        category_slug=category.slug or '',
     )
 
     offer = (
@@ -492,6 +526,7 @@ def upsert_offer(
             )
 
     match = find_master(features, category_id=category.pk, raw_name=name)
+    match = _guard_same_source_merge(match, src=src, category_id=category.pk)
     product, product_created, match_reason = _resolve_product_for_match(
         match,
         features=features,
@@ -575,6 +610,7 @@ def shadow_match(
         sku=vendor_code or '',
         url=canonical_url,
         mpn_hint=mpn_hint,
+        category_slug=category.slug or '',
     )
     result = find_master(features, category_id=category.pk, raw_name=name)
     write_audit(

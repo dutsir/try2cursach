@@ -28,6 +28,11 @@ DISPLAY_NUM="${DISPLAY_NUM:-99}"
 XVFB_RESOLUTION="${XVFB_RESOLUTION:-1920x1080x24}"
 CELERY_CONCURRENCY="${CELERY_CONCURRENCY:-1}"
 CELERY_LOGLEVEL="${CELERY_LOGLEVEL:-info}"
+# Какие очереди обслуживает воркер. По умолчанию — все (удобно для dev).
+# На VPS поднимайте два воркера: тяжёлый "-Q parsing_heavy" (concurrency=1)
+# и лёгкий "-Q parsing_light,default" (concurrency=2+).
+CELERY_QUEUES="${CELERY_QUEUES:-parsing_heavy,parsing_light,default}"
+CELERY_MAX_TASKS_PER_CHILD="${CELERY_MAX_TASKS_PER_CHILD:-10}"
 
 # Проверяем что Xvfb установлен
 if ! command -v Xvfb &>/dev/null; then
@@ -66,11 +71,12 @@ echo "✅ DISPLAY=$DISPLAY"
 # --pool=prefork: параллельные процессы (на Linux работает в отличие от Windows)
 # --concurrency: количество параллельных worker-процессов
 #   Для Chrome-парсеров не больше 2-4, иначе RAM кончится (каждый Chrome ~500MB)
-# -Q default: можно потом разделить очереди (parsing, light)
-echo "🚀 Стартую Celery worker (concurrency=$CELERY_CONCURRENCY)..."
+# -Q: список очередей (см. CELERY_QUEUES выше; роутинг — в settings.CELERY_TASK_ROUTES)
+echo "🚀 Стартую Celery worker (concurrency=$CELERY_CONCURRENCY, queues=$CELERY_QUEUES)..."
 exec celery -A config worker \
     --loglevel="$CELERY_LOGLEVEL" \
     --pool=prefork \
     --concurrency="$CELERY_CONCURRENCY" \
-    --max-tasks-per-child=10 \
+    --queues="$CELERY_QUEUES" \
+    --max-tasks-per-child="$CELERY_MAX_TASKS_PER_CHILD" \
     --hostname="worker@%h"

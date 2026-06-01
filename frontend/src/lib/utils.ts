@@ -41,10 +41,16 @@ export const SOURCE_LABELS: Record<string, string> = {
   dns: 'DNS',
   citilink: 'Ситилинк',
   ozon: 'Ozon',
+  wb: 'Wildberries',
+  regard: 'Regard',
+  mvideo: 'М.Видео',
 }
 
 export const SOURCE_COLORS: Record<string, string> = {
   dns: '#ef4444',
   citilink: '#f97316',
   ozon: '#3b82f6',
+  wb: '#a855f7',
+  regard: '#22c55e',
+  mvideo: '#e11d48',
 }

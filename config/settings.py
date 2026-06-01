@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'apps.products',
     'apps.prices',
     'apps.alerts',
+    'apps.builds',
     'apps.analytics',
     'apps.api',
 ]
@@ -158,14 +159,47 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = 600
+# Глобальный потолок (страховка). Реальные лимиты задаются по воркерам через
+# CLI (--time-limit / --soft-time-limit) в docker-compose, т.к. тяжёлым
+# Selenium-задачам нужно больше времени, чем лёгким HTTP.
+CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', '1800'))
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_DNS_CATEGORY_PAUSE_SECONDS = int(os.getenv('CELERY_DNS_CATEGORY_PAUSE_SECONDS', '180'))
 
 
 CELERY_TASK_ACKS_LATE = True
-CELERY_TASK_REJECT_ON_WORKER_LOST = True
+# False — критично для парсинга на VPS. При acks_late задача подтверждается ПОСЛЕ
+# выполнения; если воркер умирает (OOM-kill SIGKILL на тяжёлом Selenium), то:
+#   True  → RabbitMQ переотправляет ту же задачу → она снова падает по OOM →
+#           бесконечный poison-loop (наблюдали: один «ядовитый» парсинг молотил
+#           машину по кругу каждые ~90с, 177GB block I/O).
+#   False → убитая задача помечается failed и НЕ переотправляется. Потерять один
+#           парсинг не страшно: beat пере-планирует каждые 6ч, ручной запуск повторим.
+CELERY_TASK_REJECT_ON_WORKER_LOST = False
+
+# --- Защита памяти воркеров на VPS ---
+# Перезапуск дочернего процесса после N задач освобождает память, которую
+# Chrome/Selenium и sentence-transformers не всегда отдают обратно ОС.
+CELERY_WORKER_MAX_TASKS_PER_CHILD = int(os.getenv('CELERY_WORKER_MAX_TASKS_PER_CHILD', '10'))
+# prefetch=1: воркер забирает по одной тяжёлой задаче за раз и не держит в
+# памяти очередь «про запас» — критично при concurrency=1 на парсинге.
+CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIPLIER', '1'))
+
+# --- Разделение очередей: тяжёлые (Chrome) / лёгкие (HTTP) / прочее ---
+# Тяжёлые парсеры (Selenium + Chrome, ~300-500 MB RAM каждый) изолируем в
+# parsing_heavy и крутим воркером с concurrency=1, чтобы не словить OOM.
+# Лёгкие HTTP-парсеры (WB, Regard) и быстрые задачи идут отдельно и могут
+# выполняться параллельно без риска для памяти.
+CELERY_TASK_DEFAULT_QUEUE = 'default'
+CELERY_TASK_ROUTES = {
+    'apps.prices.tasks.task_parse_category': {'queue': 'parsing_heavy'},        # DNS
+    'apps.prices.tasks.task_parse_citilink_category': {'queue': 'parsing_heavy'},
+    'apps.prices.tasks.task_parse_ozon_category': {'queue': 'parsing_heavy'},
+    'apps.prices.tasks.task_parse_mvideo_category': {'queue': 'parsing_heavy'},  # Chrome+WAF
+    'apps.prices.tasks.task_parse_wb_category': {'queue': 'parsing_light'},      # HTTP
+    'apps.prices.tasks.task_parse_regard_category': {'queue': 'parsing_light'},  # HTTP
+}
 
 
 MERGE_AUDIT_RETENTION_DAYS = int(os.getenv('MERGE_AUDIT_RETENTION_DAYS', '90'))
@@ -222,6 +256,17 @@ DNS_SYNC_CATEGORY_COOLDOWN_MAX = float(os.getenv('DNS_SYNC_CATEGORY_COOLDOWN_MAX
 DNS_USER_DATA_DIR = os.getenv(
     'DNS_USER_DATA_DIR',
     str(BASE_DIR / 'var' / 'chrome_profiles' / 'dns'),
+)
+
+# Анти-детект слой для Qrator (маскировка автоматизации/Xvfb через CDP).
+DNS_STEALTH = os.getenv('DNS_STEALTH', 'true').lower() in ('1', 'true', 'yes')
+
+# JSON с расшифрованными cookies dns-shop.ru из реального браузера
+# (см. scripts/export_dns_cookies.py). Парсер инжектит их через CDP до навигации,
+# чтобы пройти Qrator с готовой clearance-сессией. Пусто/нет файла — пропускаем.
+DNS_COOKIES_FILE = os.getenv(
+    'DNS_COOKIES_FILE',
+    str(BASE_DIR / 'var' / 'chrome_profiles' / 'dns_cookies.json'),
 )
 
 
@@ -373,3 +418,31 @@ LOGGING = {
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
 AI_COMPARE_CACHE_TTL = int(os.getenv('AI_COMPARE_CACHE_TTL', '86400'))
+
+
+# === Подписки / уведомления ===
+# Cooldown между повторными уведомлениями по одной подписке (часы). Пока цена
+# держится ниже целевой, не спамим каждый прогон проверки.
+SUBSCRIPTION_NOTIFY_COOLDOWN_HOURS = int(os.getenv('SUBSCRIPTION_NOTIFY_COOLDOWN_HOURS', '24'))
+
+
+# === Telegram-дублирование уведомлений ===
+# Бот не умеет писать по @username — нужен chat_id. Его ловим polling'ом
+# getUpdates (periodic Celery-задача), когда пользователь пишет боту код привязки.
+# Webhook не нужен (нет публичного HTTPS на VPS).
+TELEGRAM_ENABLED = os.getenv('TELEGRAM_ENABLED', '0') == '1'
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '').strip()
+TELEGRAM_BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@')
+TELEGRAM_API_TIMEOUT = int(os.getenv('TELEGRAM_API_TIMEOUT', '15'))
+# Сколько действует код привязки, прежде чем протухнет (минуты).
+TELEGRAM_LINK_CODE_TTL_MINUTES = int(os.getenv('TELEGRAM_LINK_CODE_TTL_MINUTES', '15'))
+
+
+# === Cookies / CSRF для прод-режима ===
+# В DEBUG оставляем мягкие настройки (HTTP-разработка). В проде — Secure cookies.
+SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
+CSRF_COOKIE_SAMESITE = os.getenv('CSRF_COOKIE_SAMESITE', 'Lax')
+# Фронту (SPA) нужно читать csrftoken из cookie, поэтому HttpOnly=False.
+CSRF_COOKIE_HTTPONLY = False
+SESSION_COOKIE_SECURE = not DEBUG and os.getenv('COOKIE_SECURE', '1') == '1'
+CSRF_COOKIE_SECURE = not DEBUG and os.getenv('COOKIE_SECURE', '1') == '1'

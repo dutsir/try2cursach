@@ -5,12 +5,11 @@ from . import views
 
 router = DefaultRouter()
 router.register('products', views.ProductViewSet, basename='product')
-router.register('families', views.ProductFamilyViewSet, basename='family')
 router.register('categories', views.CategoryViewSet, basename='category')
-router.register('offers', views.OfferViewSet, basename='offer')
 router.register('subscriptions', views.SubscriptionViewSet, basename='subscription')
 router.register('notifications', views.NotificationViewSet, basename='notification')
 router.register('wishlist', views.WishlistViewSet, basename='wishlist')
+router.register('build', views.BuildViewSet, basename='build')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -22,4 +21,7 @@ urlpatterns = [
     path('auth/login/', views.login_view, name='login'),
     path('auth/logout/', views.logout_view, name='logout'),
     path('auth/me/', views.me_view, name='me'),
+    path('telegram/link/', views.telegram_link, name='telegram-link'),
+    path('telegram/status/', views.telegram_status, name='telegram-status'),
+    path('telegram/unlink/', views.telegram_unlink, name='telegram-unlink'),
 ]

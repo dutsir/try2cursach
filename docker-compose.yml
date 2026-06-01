@@ -9,7 +9,9 @@ services:
       POSTGRES_USER: ${DB_USER:-pm_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-pm_secret}
     ports:
-      - "5432:5432"
+      # INFRA_BIND_ADDR: на VPS задать WG-адрес (напр. 10.10.0.1), чтобы БД/брокер
+      # слушали ТОЛЬКО WireGuard-интерфейс, а не публичный IP. Дефолт 0.0.0.0 = как раньше (dev).
+      - "${INFRA_BIND_ADDR:-0.0.0.0}:5432:5432"
     volumes:
       # ВАЖНО: образ timescale/timescaledb-ha хранит данные в /home/postgres/pgdata/data
       # а не в стандартном /var/lib/postgresql/data!
@@ -29,8 +31,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "${INFRA_BIND_ADDR:-0.0.0.0}:5672:5672"
+      - "${INFRA_BIND_ADDR:-0.0.0.0}:15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -44,7 +46,7 @@ services:
     container_name: pm_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${INFRA_BIND_ADDR:-0.0.0.0}:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -71,6 +73,11 @@ services:
     volumes:
       - .:/app
       - static_volume:/app/staticfiles
+      # HF-кэш с хоста: модель эмбеддингов (intfloat/multilingual-e5-base, ~1.1G)
+      # уже скачана на хосте. Офлайн-флаги (.env: HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE/
+      # DEDUP_EMBEDDING_LOCAL_FILES_ONLY=1) запрещают докачку в контейнере, поэтому
+      # модель ДОЛЖНА лежать в кэше. На VPS: HF_HOME_DIR=путь_к_кэшу с предзагрузкой.
+      - ${HF_HOME_DIR:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,20 +88,40 @@ services:
              python manage.py seed_categories --update &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
 
-  celery-worker:
+  # Тяжёлый воркер: Selenium + Chrome (DNS, Citilink, Ozon).
+  # concurrency=1 — один Chrome за раз, иначе на VPS закончится RAM (OOM).
+  # Xvfb даёт виртуальный дисплей (надёжнее обходит 403 DNS, чем headless).
+  celery-worker-heavy:
     profiles: ["docker-celery"]
     build:
       context: .
       dockerfile: docker/Dockerfile.celery
-    container_name: pm_celery_worker
+    container_name: pm_celery_worker_heavy
     restart: unless-stopped
     env_file: .env
     environment:
       DB_HOST: postgres
       RABBITMQ_HOST: rabbitmq
       REDIS_HOST: redis
+    # Chrome без увеличенного /dev/shm падает на больших каталогах (дефолт Docker — 64M).
+    shm_size: '1gb'
+    # Xvfb поднимается надёжно в docker/celery-entrypoint.sh (с проверкой готовности
+    # X-сервера и чисткой stale-локов). Команда передаётся entrypoint'у как аргументы:
+    # folded-скаляр `>` склеивает строки в ОДНУ (отступ continuation == отступу первой
+    # строки контента), без ловушки с переводами строк внутри sh -c.
+    command: >
+      /app/docker/celery-entrypoint.sh
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${CELERY_HEAVY_CONCURRENCY:-1}
+      -Q parsing_heavy
+      --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-10}
+      --time-limit=${CELERY_HEAVY_TIME_LIMIT:-1800}
+      --soft-time-limit=${CELERY_HEAVY_SOFT_TIME_LIMIT:-1680}
+      --hostname=heavy@%h
     volumes:
       - .:/app
+      # HF-кэш эмбеддингов с хоста (офлайн-флаги в .env запрещают докачку в контейнере).
+      - ${HF_HOME_DIR:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
       # Для переезда worker'а в Docker — раскомментировать чтобы переиспользовать
       # хостовые драйверы и warmed-up Chrome профили (избежать повторного Qrator-challenge):
       # - ~/.local/share/undetected_chromedriver:/root/.local/share/undetected_chromedriver
@@ -109,9 +136,51 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          # Chrome + длинный скролл каталога DNS легко берёт >2.5GB → cgroup OOM-killed
+          # воркер (SIGKILL), а acks_late=True переотправлял задачу по кругу. 4g даёт запас.
+          memory: ${CELERY_HEAVY_MEM_LIMIT:-4g}
         reservations:
-          memory: 1.5G
+          memory: 1G
+
+  # Лёгкий воркер: HTTP-парсеры (Wildberries, Regard) + быстрые задачи
+  # (сохранение цен, подписки, очистки). Chrome не нужен, можно concurrency>1.
+  celery-worker-light:
+    profiles: ["docker-celery"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
+    container_name: pm_celery_worker_light
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+    command: >
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${CELERY_LIGHT_CONCURRENCY:-2}
+      -Q parsing_light,default
+      --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-20}
+      --time-limit=${CELERY_LIGHT_TIME_LIMIT:-600}
+      --soft-time-limit=${CELERY_LIGHT_SOFT_TIME_LIMIT:-540}
+      --hostname=light@%h
+    volumes:
+      - .:/app
+      # HF-кэш эмбеддингов с хоста (light тоже дедупит WB/Regard).
+      - ${HF_HOME_DIR:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${CELERY_LIGHT_MEM_LIMIT:-1500m}
+        reservations:
+          memory: 512m
 
   celery-beat:
     profiles: ["docker-celery"]

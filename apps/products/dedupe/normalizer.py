@@ -101,16 +101,35 @@ for canonical, aliases in BRAND_ALIASES.items():
 _BRAND_ALIASES_SORTED: list[str] = sorted(_BRAND_BY_ALIAS.keys(), key=len, reverse=True)
 
 
-def extract_brand(name: str) -> str:
+# Вендоры ЧИПА/процессора. Для device-категорий (см. ниже) это НЕ бренд товара:
+# у видеокарты бренд — производитель платы (MSI/Palit/Zotac), у ноутбука —
+# сборщик (Asus/Lenovo/HP), а nvidia/amd/intel определяют чип.
+_CHIP_VENDOR_BRANDS: frozenset[str] = frozenset({'nvidia', 'amd', 'intel'})
+
+# Категории, где nvidia/amd/intel в названии — это чип/процессор/чипсет, а не
+# бренд. На матплате «AMD B650» / «Intel H610» — это чипсет, бренд = Biostar/Asus.
+# В processory/operativnaya-pamyat intel/amd ЯВЛЯЮТСЯ брендом — их тут нет.
+_CHIP_NOT_BRAND_CATEGORIES: frozenset[str] = frozenset({
+    'videokarty', 'noutbuki', 'monobloki', 'sobrannyepk', 'mikrokompyutery',
+    'materinskie-platy', 'servernye-materinskie-platy',
+})
+
+
+def extract_brand(name: str, category_slug: str = '') -> str:
     if not name:
         return ''
     n = _strip_accents(name)
     n_padded = f' {n} '
+    skip_chip = (category_slug or '').strip().lower() in _CHIP_NOT_BRAND_CATEGORIES
     for alias in _BRAND_ALIASES_SORTED:
-
-
         if f' {alias} ' in n_padded:
-            return _BRAND_BY_ALIAS[alias]
+            canonical = _BRAND_BY_ALIAS[alias]
+            # В device-категориях не отдаём вендор чипа как бренд — ищем дальше
+            # реального производителя (MSI/Asus/...). Если ничего нет — лучше
+            # пустой бренд, чем мусорный «nvidia» на всех картах.
+            if skip_chip and canonical in _CHIP_VENDOR_BRANDS:
+                continue
+            return canonical
     return ''
 
 
@@ -489,7 +508,7 @@ def normalize_offer(
 
     Без family-экстрактора — fallback на extract_mpn (артикул производителя).
     """
-    brand = extract_brand(name)
+    brand = extract_brand(name, category_slug=category_slug)
     mpn, mpn_src = extract_mpn(name, sku=sku, url=url, hint=mpn_hint)
     specs = extract_specs(name)
     variant_label, variant_specs = extract_variant_from_url(url)
@@ -513,6 +532,15 @@ def normalize_offer(
                 mpn_src = 'family_extractor'
         except Exception:
             pass  # fallback на extract_mpn (mpn уже установлен)
+
+    # Подкрепление бренда вендор-префиксом family model_code: экстрактор уже
+    # знает производителя платы/устройства (например «msi rtx 4060» → msi),
+    # что точнее парсинга бренда из шумного названия. Чип-вендоры пропускаем.
+    if mpn_src == 'family_extractor' and not brand:
+        head = mpn.split(' ', 1)[0].strip().lower()
+        candidate = _BRAND_BY_ALIAS.get(head)
+        if candidate and candidate not in _CHIP_VENDOR_BRANDS:
+            brand = candidate
 
     clean = _normalize_name(name)
     tokens = frozenset(t for t in clean.split() if len(t) > 1)

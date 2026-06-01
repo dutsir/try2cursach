@@ -32,7 +32,7 @@ export function ScoutLayout({ user, children, onLogout }: ScoutLayoutProps) {
     queryFn: notificationsApi.list,
     refetchInterval: 60_000,
   })
-  const unreadCount = notifs?.count ?? 0
+  const unreadCount = notifs?.results.filter(n => !n.is_read).length ?? 0
 
   const { data: productsResp } = useQuery({
     queryKey: ['products', { page_size: 1 }],
@@ -73,8 +73,6 @@ export function ScoutLayout({ user, children, onLogout }: ScoutLayoutProps) {
             compareCount={compareCount}
             subscriptionsCount={subscriptionsCount}
             notificationsCount={unreadCount}
-            planUsed={productsCount}
-            planLimit={10}
           />
         </div>
         <main className="px-6 lg:px-10 py-8 lg:pb-20 border-l border-scout-subtle min-h-[800px]">

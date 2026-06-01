@@ -7,6 +7,7 @@ import {
   Star,
   Target,
   Bell as BellIcon,
+  Settings as SettingsIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -24,8 +25,6 @@ interface DashSidebarProps {
   compareCount?: number
   subscriptionsCount?: number
   notificationsCount?: number
-  planUsed?: number
-  planLimit?: number
 }
 
 export function DashSidebar({
@@ -34,8 +33,6 @@ export function DashSidebar({
   compareCount = 0,
   subscriptionsCount = 0,
   notificationsCount = 0,
-  planUsed = 0,
-  planLimit = 10,
 }: DashSidebarProps) {
   const items: NavItem[] = [
     { to: '/',              label: 'Главная',     icon: Home,       count: productsCount, end: true },
@@ -45,10 +42,8 @@ export function DashSidebar({
     { to: '/wishlist',      label: 'Вишлист',     icon: Star,       count: wishlistCount || undefined },
     { to: '/subscriptions', label: 'Подписки',    icon: Target,     count: subscriptionsCount || undefined },
     { to: '/notifications', label: 'Уведомления', icon: BellIcon,   count: notificationsCount || undefined },
+    { to: '/settings',      label: 'Настройки',   icon: SettingsIcon },
   ]
-
-  const planPct = planLimit > 0 ? Math.min(100, (planUsed / planLimit) * 100) : 0
-  const exceeded = planUsed > planLimit
 
   return (
     <aside className="bg-scout-bg p-4">
@@ -82,32 +77,6 @@ export function DashSidebar({
           </NavLink>
         ))}
       </nav>
-
-      <div className="mt-10 p-4 bg-scout-elevated border border-scout-subtle rounded-scout-lg">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] text-scout-dim uppercase tracking-[0.1em]">free plan</span>
-          <button className="text-[11px] text-scout-accent hover:text-scout-accent-hover transition-colors">
-            upgrade →
-          </button>
-        </div>
-        <div className="mt-3 text-[13px] text-scout-text scout-tabnums">
-          {planUsed} / {planLimit} товаров
-        </div>
-        <div className="mt-2 h-1 bg-scout-subtle rounded-full overflow-hidden">
-          <div
-            className="h-full transition-all"
-            style={{
-              width: `${planPct}%`,
-              background: exceeded ? 'var(--color-danger)' : 'var(--color-accent)',
-            }}
-          />
-        </div>
-        <div className="mt-2 text-[11px] text-scout-muted">
-          {exceeded
-            ? 'лимит превышен. некоторые товары не парсятся.'
-            : `осталось ${Math.max(0, planLimit - planUsed)} слотов`}
-        </div>
-      </div>
     </aside>
   )
 }

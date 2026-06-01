@@ -12,6 +12,7 @@ class PriceHistory(BaseModel):
         CITILINK = 'citilink', 'Ситилинк'
         WB = 'wb', 'Wildberries'
         REGARD = 'regard', 'Регард'
+        MVIDEO = 'mvideo', 'М.Видео'
 
     product = models.ForeignKey(
         Product,
@@ -60,6 +61,7 @@ class ParseRun(BaseModel):
         CITILINK = 'citilink', 'Ситилинк'
         WB = 'wb', 'Wildberries'
         REGARD = 'regard', 'Регард'
+        MVIDEO = 'mvideo', 'М.Видео'
 
     class Status(models.TextChoices):
         RUNNING = 'running', 'Идёт'

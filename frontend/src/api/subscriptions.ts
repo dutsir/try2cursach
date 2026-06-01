@@ -6,7 +6,7 @@ export const subscriptionsApi = {
     api.get<PaginatedResponse<Subscription>>('/api/subscriptions/'),
 
   create: (productId: number, targetPrice: number) =>
-    api.post<Subscription>('/api/subscriptions/', { product: productId, target_price: targetPrice }),
+    api.post<Subscription>('/api/subscriptions/', { product_id: productId, target_price: targetPrice }),
 
   delete: (id: number) =>
     api.delete(`/api/subscriptions/${id}/`),
@@ -18,4 +18,13 @@ export const subscriptionsApi = {
 export const notificationsApi = {
   list: () =>
     api.get<PaginatedResponse<Notification>>('/api/notifications/'),
+
+  markRead: (id: number) =>
+    api.patch<Notification>(`/api/notifications/${id}/`, { is_read: true }),
+
+  markAllRead: () =>
+    api.post<{ marked: number }>('/api/notifications/mark_all_read/', {}),
+
+  unreadCount: () =>
+    api.get<{ unread: number }>('/api/notifications/unread_count/'),
 }

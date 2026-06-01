@@ -97,6 +97,16 @@ BRAND_ALIASES: dict[str, tuple[str, ...]] = {
     'colorful': ('colorful',),
     'inno3d': ('inno3d',),
     'zotac': ('zotac',),
+    # Производители видеокарт (AIB), которых не хватало в словаре — иначе
+    # карты «PowerColor AMD ...» теряли бренд при чистке чип-вендора.
+    'powercolor': ('powercolor', 'power color'),
+    'xfx': ('xfx',),
+    'evga': ('evga',),
+    'kfa2': ('kfa2',),
+    'pny': ('pny',),
+    'manli': ('manli',),
+    'biostar': ('biostar',),
+    'afox': ('afox',),
     'aerocool': ('aerocool',),
     'deepcool': ('deepcool', 'deep cool'),
     'cougar': ('cougar',),

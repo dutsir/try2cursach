@@ -6,7 +6,7 @@ __pycache__/
 dist/
 build/
 *.whl
-
+docs/
 # Frontend (Node / Vite / Tailwind)
 node_modules/
 frontend/dist/
@@ -74,5 +74,7 @@ coverage.xml
 .cache/
 models/
 *.sh
+# Инфра-скрипты Docker нужны в образе/на VPS (deploy.sh делает git pull → build).
+!docker/*.sh
 *.ps1
 design_handoff_scout/

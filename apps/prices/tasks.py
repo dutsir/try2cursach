@@ -270,6 +270,38 @@ def parse_category_with_parser_citilink(
     )
 
 
+def parse_category_with_parser_mvideo(
+    category: Category,
+    parser: Any,
+    *,
+    sync: bool = False,
+) -> dict:
+    path = category.store_path(PriceHistory.Source.MVIDEO.value)
+    if not path:
+        logger.warning(
+            'Категория %s: нет активной привязки М.Видео (CategoryListing)',
+            category.slug,
+        )
+        return {'status': 'skipped', 'category': category.slug, 'reason': 'no_mvideo_listing'}
+
+    def _do() -> list:
+        parsed = parser.parse_category(path)
+        if not parsed and sync:
+            logger.info('Повтор категории %s с новым браузером (М.Видео)…', category.slug)
+            parser.close()
+            time.sleep(8)
+            parsed = parser.parse_category(path)
+        return parsed or []
+
+    return _run_with_instrumentation(
+        category=category,
+        source=PriceHistory.Source.MVIDEO.value,
+        sync=sync,
+        parse_fn=_do,
+        log_label='Парсинг М.Видео',
+    )
+
+
 def parse_category_with_parser_ozon(
     category: Category,
     parser: Any,
@@ -311,7 +343,7 @@ def parse_category_with_parser_ozon(
     acks_late=True,
 )
 def task_parse_category(self, category_id: int) -> dict:
-    from .parsers import DNSParser
+    from .parsers import DNSBlockedError, DNSParser
 
     try:
         category = Category.objects.get(pk=category_id, is_active=True)
@@ -319,8 +351,16 @@ def task_parse_category(self, category_id: int) -> dict:
         logger.warning('Категория id=%d не найдена или неактивна', category_id)
         return {'status': 'skipped', 'reason': 'category_not_found'}
 
-    with DNSParser() as parser:
-        return parse_category_with_parser(category, parser)
+    # 403 от Qrator — это бан по IP/сети, а не временный сбой. Авторетрай тут вреден:
+    # каждый повтор снова стучится на сайт и продлевает/заново вызывает бан. Поэтому
+    # ловим DNSBlockedError и завершаем задачу со статусом 'blocked', НЕ пробрасывая
+    # её в autoretry_for=(Exception,).
+    try:
+        with DNSParser() as parser:
+            return parse_category_with_parser(category, parser)
+    except DNSBlockedError as exc:
+        logger.warning('DNS заблокировал парсинг категории %s (403): %s', category.slug, exc)
+        return {'status': 'blocked', 'category': category.slug, 'source': 'dns'}
 
 
 @shared_task(
@@ -342,6 +382,34 @@ def task_parse_citilink_category(self, category_id: int) -> dict:
 
     with CitilinkParser() as parser:
         return parse_category_with_parser_citilink(category, parser)
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=60,
+    retry_backoff_max=600,
+    max_retries=3,
+    acks_late=True,
+)
+def task_parse_mvideo_category(self, category_id: int) -> dict:
+    from .mvideo_parser import MVideoBlockedError, MVideoParser
+
+    try:
+        category = Category.objects.get(pk=category_id, is_active=True)
+    except Category.DoesNotExist:
+        logger.warning('Категория id=%d не найдена или неактивна', category_id)
+        return {'status': 'skipped', 'reason': 'category_not_found'}
+
+    # WAF М.Видео может вернуть antibot-страницу. Это не временный сбой, который
+    # лечится повтором (autoretry лишь снова дёргает WAF), поэтому завершаем
+    # задачу со статусом 'blocked', не пробрасывая в autoretry_for=(Exception,).
+    try:
+        with MVideoParser() as parser:
+            return parse_category_with_parser_mvideo(category, parser)
+    except MVideoBlockedError as exc:
+        logger.warning('М.Видео заблокировал парсинг категории %s (WAF): %s', category.slug, exc)
+        return {'status': 'blocked', 'category': category.slug, 'source': 'mvideo'}
 
 
 @shared_task(
@@ -508,7 +576,15 @@ def task_save_price(
     allowed_sources = {c.value for c in PriceHistory.Source}
     src = (source or PriceHistory.Source.DNS.value).lower()
     if src not in allowed_sources:
-        src = PriceHistory.Source.DNS.value
+        # offer.source — авторитетный источник. Если он не входит в PriceHistory.Source,
+        # это рассинхрон enum/воркеров (как было с mvideo), а не данные DNS. Не маскируем
+        # под 'dns' — это испортило бы историю цен DNS, а громко падаем и пропускаем запись.
+        logger.error(
+            'task_save_price: источник %r отсутствует в PriceHistory.Source (offer_id=%s, product_id=%s). '
+            'Запись пропущена во избежание загрязнения истории DNS — проверьте рассинхрон enum/воркеров.',
+            src, offer_id, product_id,
+        )
+        return {'status': 'skipped', 'reason': 'unknown_source', 'source': src}
 
 
     last_qs = PriceHistory.objects.filter(product=product, source=src, is_actual=True)
@@ -521,6 +597,12 @@ def task_save_price(
 
     if last_record and last_record.price == price_decimal:
         logger.debug('Цена %s (%s) не изменилась (%s₽)', product.name, src, price_decimal)
+        if offer is not None and offer.current_price != price_decimal:
+            # Ленивый бэкилл денормализованной цены для офферов, у которых она ещё пуста.
+            offer.current_price = price_decimal
+            offer.current_old_price = old_price_decimal
+            offer.price_updated_at = last_record.timestamp
+            offer.save(update_fields=['current_price', 'current_old_price', 'price_updated_at', 'updated_at'])
         return {'status': 'unchanged', 'product_id': product.pk}
 
     if last_record:
@@ -536,6 +618,12 @@ def task_save_price(
         is_actual=True,
         source=src,
     )
+
+    if offer is not None:
+        offer.current_price = price_decimal
+        offer.current_old_price = old_price_decimal
+        offer.price_updated_at = ts
+        offer.save(update_fields=['current_price', 'current_old_price', 'price_updated_at', 'updated_at'])
 
     logger.info('Сохранена цена для %s: %s₽', product.name, price_decimal)
 

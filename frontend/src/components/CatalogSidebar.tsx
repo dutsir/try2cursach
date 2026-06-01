@@ -8,6 +8,7 @@ import { PriceRangeSlider } from './PriceRangeSlider'
 const SOURCE_LABELS: Record<string, string> = {
   dns:      'DNS',
   citilink: 'Ситилинк',
+  mvideo:   'М.Видео',
   ozon:     'Ozon',
   wb:       'Wildberries',
 }
@@ -76,8 +77,9 @@ export function CatalogSidebar() {
         <div className="space-y-1">
           {(facets?.sources || [
             { code: 'dns', count: 0 },
-            { code: 'wb', count: 0 },
             { code: 'citilink', count: 0 },
+            { code: 'mvideo', count: 0 },
+            { code: 'wb', count: 0 },
             { code: 'ozon', count: 0 },
           ]).map(s => (
             <label

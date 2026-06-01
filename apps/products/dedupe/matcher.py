@@ -8,7 +8,7 @@ from typing import Any, Literal
 from django.conf import settings
 from django.db.models import Q
 
-from ..models import Product
+from ..models import Offer, Product
 from .embedding import (
     auto_merge_threshold as embedding_auto_threshold,
     embedding_matching_enabled,
@@ -24,6 +24,11 @@ from .constants import (
     VARIANT_SPEC_KEYS_BY_CATEGORY,
     WEAK_SOURCES,
     WEIGHTS,
+)
+from .cross_source import (
+    is_discriminating as _sig_discriminating,
+    model_signature as _model_signature,
+    specs_conflict as _sig_specs_conflict,
 )
 from .features import Features
 from .normalizer import dice as dice_score
@@ -189,6 +194,58 @@ def find_cross_source_specs_match(
         if best is None or cand.score > best.score:
             best = cand
     return best
+
+
+def _cross_source_signature_enabled() -> bool:
+    return bool(getattr(settings, 'DEDUP_CROSS_SOURCE_SIGNATURE_ENABLED', True))
+
+
+def find_cross_source_signature_match(
+    features: Features,
+    *,
+    category_id: int,
+    raw_name: str,
+    blocked_ids: frozenset[int],
+) -> MatchResult | None:
+    """Парс-тайм аналог AUTO-пасса link_cross_source.
+
+    Если у входящего оффера ТОЧНО совпадает «сигнатура модели» (см.
+    dedupe/cross_source.py) с существующим мастером того же бренда ИЗ ДРУГОГО
+    источника (мастер не в blocked_ids ⇒ у него нет оффера входящего источника)
+    и нет конфликта specs → уверенный cross-source матч (auto_merge).
+
+    Это сводит один товар из разных магазинов в один мастер прямо при парсинге.
+    Похожие-но-не-точные совпадения сюда НЕ попадают (их ловит батч-команда в
+    review-очередь) — на парсинге держим только заведомо безопасные слияния.
+    """
+    if not _cross_source_signature_enabled():
+        return None
+    brand = (features.brand or '').strip()
+    name = raw_name or ''
+    if not brand or not name:
+        return None
+    sig = _model_signature(name, brand)
+    if not _sig_discriminating(sig):
+        return None
+
+    qs = (
+        Product.objects.filter(category_id=category_id, brand=brand, is_active=True)
+        .exclude(id__in=blocked_ids)
+        .only('id', 'name', 'brand', 'specs_fingerprint', 'merge_locked')[:250]
+    )
+    for product in qs:
+        if product.merge_locked:
+            continue
+        if _model_signature(product.name or '', product.brand or '') != sig:
+            continue
+        if _sig_specs_conflict(product.specs_fingerprint or {}, features.specs):
+            continue
+        return MatchResult(
+            product, 0.99,
+            {'rule': 'cross_source_signature', 'sig': sorted(sig), 'brand': brand},
+            'auto_merge',
+        )
+    return None
 
 
 def _try_embedding_match(
@@ -357,6 +414,29 @@ def _decide(
     return 'new'
 
 
+# Источники, у которых ВНУТРИ одного источника бывают легитимные дубли
+# (несколько продавцов/карточек одного товара) → нужна внутренняя дедупликация.
+# Для всех остальных источников (dns, citilink, mvideo, regard) товары в рамках
+# категории уникальны по url/sku, поэтому два разных оффера одного источника
+# НЕ должны схлопываться в один Product.
+WITHIN_SOURCE_DEDUP_SOURCES: frozenset[str] = frozenset({'wb'})
+
+
+def _same_source_blocked_ids(features: Features, cat: int) -> frozenset[int]:
+    """product_id мастеров, у которых уже есть оффер входящего источника.
+
+    Для источников вне WITHIN_SOURCE_DEDUP_SOURCES такие мастера запрещены как
+    цель мёрджа — иначе разные товары одного источника склеятся в один Product.
+    """
+    src = (features.source or '').strip().lower()
+    if not src or src in WITHIN_SOURCE_DEDUP_SOURCES:
+        return frozenset()
+    return frozenset(
+        Offer.objects.filter(product__category_id=cat, source=src)
+        .values_list('product_id', flat=True),
+    )
+
+
 def find_master(
     features: Features,
     *,
@@ -367,6 +447,7 @@ def find_master(
     if cat is None:
         return MatchResult(None, 0.0, {'error': 'no_category'}, 'new')
 
+    blocked_ids = _same_source_blocked_ids(features, cat)
 
     if features.brand and features.model_code:
         det_qs = Product.objects.filter(
@@ -374,7 +455,7 @@ def find_master(
             brand=features.brand,
             vendor_code__iexact=features.model_code,
             is_active=True,
-        )
+        ).exclude(id__in=blocked_ids)
         for det in det_qs[:5]:
             if det.merge_locked:
 
@@ -393,10 +474,18 @@ def find_master(
             )
 
     cross = find_cross_source_specs_match(features, category_id=cat)
-    if cross is not None:
+    if cross is not None and not (cross.product and cross.product.pk in blocked_ids):
         return cross
 
+    sig_match = find_cross_source_signature_match(
+        features, category_id=cat, raw_name=raw_name, blocked_ids=blocked_ids,
+    )
+    if sig_match is not None:
+        return sig_match
+
     candidates = block_candidates(features, category_id=cat)
+    if blocked_ids:
+        candidates = [c for c in candidates if c.pk not in blocked_ids]
     if not candidates:
         return MatchResult(None, 0.0, {'rule': 'no_candidates'}, 'new')
 

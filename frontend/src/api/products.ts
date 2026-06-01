@@ -41,9 +41,6 @@ export const productsApi = {
 
   priceStats: (id: number) =>
     api.get<PriceStats>(`/api/products/${id}/price-stats/`),
-
-  offers: (id: number) =>
-    api.get<{ results: import('@/types').Offer[] }>(`/api/products/${id}/offers/`),
 }
 
 export const categoriesApi = {

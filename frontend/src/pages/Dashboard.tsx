@@ -11,7 +11,6 @@ import {
   ScoutProductCard,
   ProductList,
   EmptyDash,
-  computeTrend,
   genSeries,
   type DashFilter,
   type DashView,
@@ -94,15 +93,9 @@ export default function Dashboard() {
     return c
   }, [cards])
 
-  const avgSavingPct = useMemo(() => {
-    const buys = cards.filter(c => c.verdict === 'buy')
-    if (buys.length === 0) return 0
-    const totalPct = buys.reduce((sum, c) => sum + computeTrend(c.price, c.prev).abs, 0)
-    return Math.round(totalPct / buys.length)
-  }, [cards])
-
   const filtered = filter === 'all' ? cards : cards.filter(c => c.verdict === filter)
   const totalTracked = dash?.totals?.products ?? cards.length
+  const totalOffers = dash?.totals?.offers ?? 0
   const greetingName = (user?.first_name || user?.username || '').toLowerCase()
 
   if (isLoading) {
@@ -129,12 +122,7 @@ export default function Dashboard() {
         counts={counts}
       />
 
-      <DashStats
-        tracked={totalTracked}
-        avgSavingPct={avgSavingPct}
-        parsesPerDay={dash?.totals?.price_records_24h ?? 0}
-        anomalies={0}
-      />
+      <DashStats tracked={totalTracked} offersCount={totalOffers} />
 
       {view === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.products.models import Category, Product
+from apps.products.models import Category, Offer, Product
 from apps.prices.models import PriceHistory
 
 User = get_user_model()
@@ -22,6 +22,11 @@ class TestProductAPI:
         p = Product.objects.create(
             name='Test RAM', slug='test-ram', category=cat,
             url='https://dns-shop.ru/product/1/',
+        )
+        # Каталог показывает только товары с офффером, у которого есть цена.
+        Offer.objects.create(
+            product=p, source='dns', url='https://dns-shop.ru/product/1/',
+            current_price=Decimal('4999.00'), is_available=True,
         )
         PriceHistory.objects.create(
             product=p, price=Decimal('4999.00'), timestamp=timezone.now(),
@@ -64,7 +69,7 @@ class TestSubscriptionAPI:
 
     def test_create_subscription(self, auth_client, product):
         response = auth_client.post('/api/subscriptions/', {
-            'product': product.pk,
+            'product_id': product.pk,
             'target_price': '3000.00',
         })
         assert response.status_code == 201

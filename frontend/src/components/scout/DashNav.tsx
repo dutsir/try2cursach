@@ -13,7 +13,19 @@ interface DashNavProps {
 export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout }: DashNavProps) {
   const navigate = useNavigate()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const profileRef = useRef<HTMLDivElement>(null)
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const q = searchQuery.trim()
+    if (q) navigate(`/catalog?search=${encodeURIComponent(q)}`)
+    else navigate('/catalog')
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Escape') setSearchQuery('')
+  }
   const initial = user?.first_name?.charAt(0) || user?.username?.charAt(0) || 'A'
 
   useEffect(() => {
@@ -39,16 +51,28 @@ export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout }: DashN
           </span>
         </Link>
 
-        <div className="hidden md:flex items-center gap-2 bg-scout-elevated border border-scout-subtle rounded-scout px-3 h-9 w-[360px]">
-          <Search size={14} className="text-scout-dim" />
+        <form onSubmit={handleSearchSubmit} className="hidden md:flex items-center gap-2 bg-scout-elevated border border-scout-subtle rounded-scout px-3 h-9 w-[360px] focus-within:border-scout-accent/50 transition-colors">
+          <Search size={14} className="text-scout-dim shrink-0" />
           <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             placeholder="Поиск по товарам, маркетплейсам…"
             className="flex-1 bg-transparent outline-none border-none text-[13px] text-scout-text placeholder:text-scout-dim font-sans"
           />
-          <span className="font-mono text-[10px] text-scout-dim px-1.5 py-0.5 border border-scout-border rounded-[3px]">
-            ⌘K
-          </span>
-        </div>
+          {searchQuery ? (
+            <button
+              type="submit"
+              className="text-[10px] text-scout-accent hover:text-scout-accent-hover transition-colors font-mono"
+            >
+              →
+            </button>
+          ) : (
+            <span className="font-mono text-[10px] text-scout-dim px-1.5 py-0.5 border border-scout-border rounded-[3px]">
+              ⌘K
+            </span>
+          )}
+        </form>
       </div>
 
       <div className="flex items-center gap-3 md:gap-4">

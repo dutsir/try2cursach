@@ -2,10 +2,10 @@ import logging
 
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import (
-    BooleanField, Count, DecimalField, Exists, ExpressionWrapper, F,
-    Max, Min, OuterRef, Q, Subquery, Value,
+    Count, DecimalField, Exists, ExpressionWrapper, F,
+    Max, Min, OuterRef, Q, Value,
 )
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django_filters import (
     BooleanFilter, CharFilter, FilterSet, NumberFilter,
 )
@@ -19,7 +19,7 @@ from apps.alerts.models import Notification, Subscription, Wishlist, WishlistIte
 from apps.core.models import User
 from apps.prices.models import PriceHistory
 from apps.prices.stats import compute_product_price_stats
-from apps.products.models import Category, Offer, Product, ProductFamily
+from apps.products.models import Category, Offer, Product
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,6 @@ from .serializers import (
     OfferSerializer,
     PriceHistorySerializer,
     ProductDetailSerializer,
-    ProductFamilyListSerializer,
-    ProductFamilySerializer,
     ProductListSerializer,
     SubscriptionSerializer,
     WishlistItemSerializer,
@@ -75,16 +73,10 @@ class ProductFilterSet(FilterSet):
         return queryset.filter(q)
 
     def filter_min_price(self, queryset, name, value):
-        return queryset.filter(
-            offers__price_history__is_actual=True,
-            offers__price_history__price__gte=value,
-        ).distinct()
+        return queryset.filter(offers__current_price__gte=value).distinct()
 
     def filter_max_price(self, queryset, name, value):
-        return queryset.filter(
-            offers__price_history__is_actual=True,
-            offers__price_history__price__lte=value,
-        ).distinct()
+        return queryset.filter(offers__current_price__lte=value).distinct()
 
     def filter_in_stock(self, queryset, name, value):
         if value:
@@ -100,7 +92,10 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = (
         Product.objects
         .filter(is_active=True)
-        .filter(Exists(Offer.objects.filter(product=OuterRef('pk'))))
+        # Только товары, у которых хотя бы один оффер с известной ценой.
+        # Офферы без цены (current_price=null/0) — парсинг ещё не добрался или
+        # листинг снят — скрываем из каталога целиком.
+        .filter(Exists(Offer.objects.filter(product=OuterRef('pk'), current_price__gt=0)))
         .select_related('category')
         .prefetch_related('offers', 'category__listings')
     )
@@ -111,14 +106,9 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        # Annotate min_price для сортировки по цене (берём минимум по актуальным записям)
+        # Annotate min_price для сортировки по цене (минимум денормализованной Offer.current_price)
         if 'min_price' in (self.request.query_params.get('ordering') or ''):
-            qs = qs.annotate(
-                min_price=Min(
-                    'offers__price_history__price',
-                    filter=Q(offers__price_history__is_actual=True),
-                )
-            )
+            qs = qs.annotate(min_price=Min('offers__current_price'))
         return qs
 
     def get_serializer_class(self):
@@ -132,12 +122,6 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         prices = PriceHistory.objects.filter(product=product).order_by('-timestamp')[:300]
         return Response(PriceHistorySerializer(prices, many=True).data)
 
-    @action(detail=True, methods=['get'], url_path='offers')
-    def offers(self, request: Request, pk: int | None = None) -> Response:
-        product = self.get_object()
-        offers = product.offers.all().order_by('source')
-        return Response(OfferSerializer(offers, many=True).data)
-
     @action(detail=True, methods=['get'], url_path='price-stats')
     def price_stats(self, request: Request, pk: int | None = None) -> Response:
         """Возвращает агрегаты PriceStats: за всё время, 30д, 7д.
@@ -147,20 +131,12 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         """
         product = self.get_object()
 
-        # current_price: best price среди ПОСЛЕДНИХ актуальных записей по каждому
-        # офферу. Цена хранится в PriceHistory, а не в Offer.
+        # current_price: best price среди денормализованных Offer.current_price.
         offers = list(product.offers.all())
         offer_prices: list[tuple[int, bool]] = []  # (price, is_available)
         for offer in offers:
-            last = (
-                PriceHistory.objects
-                .filter(offer=offer, is_actual=True)
-                .only('price')
-                .order_by('-timestamp')
-                .first()
-            )
-            if last and last.price and last.price > 0:
-                offer_prices.append((int(last.price), bool(offer.is_available)))
+            if offer.current_price and offer.current_price > 0:
+                offer_prices.append((int(offer.current_price), bool(offer.is_available)))
 
         available = [p for p, av in offer_prices if av]
         if available:
@@ -207,46 +183,6 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
             'drop_alert_pct': stats.drop_alert_pct,
         }
         return Response(payload)
-
-
-class ProductFamilyFilterSet(FilterSet):
-    category_slug = CharFilter(method='filter_category_slug')
-
-    def filter_category_slug(self, queryset, name, value):
-        try:
-            cat = Category.objects.get(slug=value, is_active=True)
-            ids = cat.descendants_ids()
-            return queryset.filter(category_id__in=ids).distinct()
-        except Category.DoesNotExist:
-            return queryset.none()
-
-    class Meta:
-        model = ProductFamily
-        fields = ['category', 'brand', 'is_active']
-
-
-class ProductFamilyViewSet(viewsets.ReadOnlyModelViewSet):
-    """Семьи товаров: одна модель — несколько вариантов конфигов (RAM/SSD/...).
-
-    - `/api/families/` — список семей с диапазоном цен и счётчиком вариантов.
-    - `/api/families/<id>/` — детали с полным списком variants и лучшими офферами.
-    """
-
-    queryset = (
-        ProductFamily.objects
-        .filter(is_active=True)
-        .select_related('category')
-        .prefetch_related('variants', 'variants__offers')
-    )
-    permission_classes = [permissions.AllowAny]
-    filterset_class = ProductFamilyFilterSet
-    search_fields = ['name', 'brand', 'model_code']
-    ordering_fields = ['name', 'brand', 'created_at']
-
-    def get_serializer_class(self):
-        if self.action == 'retrieve':
-            return ProductFamilySerializer
-        return ProductFamilyListSerializer
 
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -347,11 +283,11 @@ class CategoryFacetsView(APIView):
         )
         brands = [{'name': b['brand'], 'count': b['count']} for b in brands_qs]
 
-        # Price range — из последних is_actual PriceHistory
+        # Price range — из денормализованной Offer.current_price
         price_agg = (
-            PriceHistory.objects
-            .filter(product__in=products, is_actual=True, price__gt=0)
-            .aggregate(min_price=Min('price'), max_price=Max('price'))
+            Offer.objects
+            .filter(product__in=products, current_price__gt=0)
+            .aggregate(min_price=Min('current_price'), max_price=Max('current_price'))
         )
         price_range = {
             'min': int(price_agg['min_price']) if price_agg.get('min_price') else 0,
@@ -397,21 +333,25 @@ class DashboardView(APIView):
         # === Totals ===
         since_24h = timezone.now() - timedelta(hours=24)
         totals = {
-            'products': Product.objects.filter(is_active=True).count(),
+            # Только товары с хотя бы одним оффером с известной ценой — те же, что видно в каталоге.
+            'products': Product.objects.filter(
+                is_active=True,
+                offers__current_price__gt=0,
+            ).distinct().count(),
             'categories': Category.objects.filter(is_active=True).count(),
             'offers': Offer.objects.count(),
             'price_records_24h': PriceHistory.objects.filter(timestamp__gte=since_24h).count(),
         }
 
         # === Top deals: товары с актуальной скидкой (old_price > price) ===
-        # Берём актуальные PriceHistory с old_price, сортируем по % скидки
+        # Берём офферы с денормализованной скидкой (current_old_price > current_price)
         deals_qs = (
-            PriceHistory.objects
-            .filter(is_actual=True, old_price__gt=F('price'), price__gt=0, offer__isnull=False)
-            .select_related('product', 'offer', 'product__category')
+            Offer.objects
+            .filter(current_old_price__gt=F('current_price'), current_price__gt=0)
+            .select_related('product', 'product__category')
             .annotate(
                 discount_pct=ExpressionWrapper(
-                    (F('old_price') - F('price')) * 100.0 / F('old_price'),
+                    (F('current_old_price') - F('current_price')) * 100.0 / F('current_old_price'),
                     output_field=DecimalField(max_digits=5, decimal_places=2),
                 )
             )
@@ -420,23 +360,23 @@ class DashboardView(APIView):
         # Дедупликация по product чтобы один товар не повторялся
         seen_products = set()
         top_deals = []
-        for ph in deals_qs:
-            if ph.product_id in seen_products:
+        for o in deals_qs:
+            if o.product_id in seen_products:
                 continue
-            seen_products.add(ph.product_id)
+            seen_products.add(o.product_id)
             top_deals.append({
-                'id': ph.product_id,
-                'name': ph.product.name,
-                'slug': ph.product.slug,
-                'brand': ph.product.brand,
-                'category_name': ph.product.category.name if ph.product.category else '',
-                'image_url': ph.offer.image_url or ph.product.image_url or '',
-                'price': str(ph.price),
-                'old_price': str(ph.old_price),
-                'discount_pct': int(ph.discount_pct or 0),
-                'source': ph.offer.source,
-                'source_display': ph.offer.get_source_display(),
-                'url': ph.offer.url,
+                'id': o.product_id,
+                'name': o.product.name,
+                'slug': o.product.slug,
+                'brand': o.product.brand,
+                'category_name': o.product.category.name if o.product.category else '',
+                'image_url': o.image_url or o.product.image_url or '',
+                'price': str(o.current_price),
+                'old_price': str(o.current_old_price),
+                'discount_pct': int(o.discount_pct or 0),
+                'source': o.source,
+                'source_display': o.get_source_display(),
+                'url': o.url,
             })
             if len(top_deals) >= 10:
                 break
@@ -492,16 +432,10 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
         best_price = None
 
         for o in offers:
-            last = (
-                PriceHistory.objects
-                .filter(offer=o, is_actual=True)
-                .order_by('-timestamp')
-                .first()
-            )
-            if last and last.price:
+            if o.current_price:
                 offers_by_source[o.source] = {
-                    'price': str(last.price),
-                    'old_price': str(last.old_price) if last.old_price else None,
+                    'price': str(o.current_price),
+                    'old_price': str(o.current_old_price) if o.current_old_price else None,
                     'source_display': o.get_source_display(),
                     'url': o.url,
                     'image_url': o.image_url or p.image_url or '',
@@ -510,13 +444,13 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
                     'reviews_count': o.extra_metadata.get('reviews_count') if o.extra_metadata else None,
                 }
 
-                if best_price is None or last.price < best_price:
-                    best_price = last.price
-                    best_offer = (o, last)
+                if best_price is None or o.current_price < best_price:
+                    best_price = o.current_price
+                    best_offer = o
 
         price_trend = None
         if best_offer:
-            o, last = best_offer
+            o = best_offer
             thirty_days_ago = timezone.now() - timedelta(days=30)
             old_price_record = (
                 PriceHistory.objects
@@ -524,8 +458,8 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
                 .order_by('-timestamp')
                 .first()
             )
-            if old_price_record and old_price_record.price:
-                delta = float(last.price - old_price_record.price)
+            if old_price_record and old_price_record.price and o.current_price:
+                delta = float(o.current_price - old_price_record.price)
                 delta_pct = (delta / float(old_price_record.price) * 100) if old_price_record.price else 0
                 price_trend = {
                     'price_30d_ago': str(old_price_record.price),
@@ -537,7 +471,7 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
         if p.variant_specs:
             specs_dict.update(p.variant_specs)
         if best_offer:
-            o, _ = best_offer
+            o = best_offer
             if o.normalized_features:
                 specs_dict.update(o.normalized_features)
             if o.extra_metadata:
@@ -547,7 +481,7 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
 
         stats = {}
         if best_offer:
-            o, _ = best_offer
+            o = best_offer
             if o.extra_metadata:
                 meta = o.extra_metadata
                 stats = {
@@ -563,10 +497,10 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
 
         best_info = None
         if best_offer:
-            o, last = best_offer
+            o = best_offer
             best_info = {
-                'price': str(last.price),
-                'old_price': str(last.old_price) if last.old_price else None,
+                'price': str(o.current_price),
+                'old_price': str(o.current_old_price) if o.current_old_price else None,
                 'source': o.source,
                 'source_display': o.get_source_display(),
                 'url': o.url,
@@ -682,16 +616,6 @@ class AICompareSummaryView(APIView):
             return Response({'error': 'Неожиданная ошибка генерации'}, status=500)
 
 
-class OfferViewSet(viewsets.ReadOnlyModelViewSet):
-
-    queryset = Offer.objects.select_related('product', 'product__category').all()
-    serializer_class = OfferSerializer
-    permission_classes = [permissions.AllowAny]
-    filterset_fields = ['source', 'product', 'product__category__slug', 'is_available']
-    search_fields = ['product__name', 'vendor_code']
-    ordering_fields = ['last_seen_at', 'source']
-
-
 class SubscriptionViewSet(
     mixins.CreateModelMixin,
     mixins.UpdateModelMixin,
@@ -710,12 +634,28 @@ class SubscriptionViewSet(
         )
 
 
-class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+class NotificationViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
     serializer_class = NotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def get_queryset(self):
         return Notification.objects.filter(user=self.request.user)
+
+    @action(detail=False, methods=['get'])
+    def unread_count(self, request: Request) -> Response:
+        count = self.get_queryset().filter(is_read=False).count()
+        return Response({'unread': count})
+
+    @action(detail=False, methods=['post'])
+    def mark_all_read(self, request: Request) -> Response:
+        updated = self.get_queryset().filter(is_read=False).update(is_read=True)
+        return Response({'marked': updated})
 
 
 class WishlistViewSet(viewsets.ViewSet):
@@ -772,6 +712,7 @@ class WishlistViewSet(viewsets.ViewSet):
             return Response({'error': 'Item not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
+@ensure_csrf_cookie
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def register(request: Request) -> Response:
@@ -779,10 +720,12 @@ def register(request: Request) -> Response:
     if serializer.is_valid():
         user = serializer.save()
         Wishlist.objects.create(user=user)
+        login(request, user)
         return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+@ensure_csrf_cookie
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def login_view(request: Request) -> Response:
@@ -813,8 +756,154 @@ def logout_view(request: Request) -> Response:
     return Response({'message': 'Logged out'})
 
 
-@api_view(['GET'])
+@ensure_csrf_cookie
+@api_view(['GET', 'PATCH'])
 @permission_classes([permissions.IsAuthenticated])
 def me_view(request: Request) -> Response:
-    serializer = UserSerializer(request.user)
-    return Response(serializer.data)
+    user = request.user
+    if request.method == 'PATCH':
+        # Разрешаем менять только безопасные поля профиля и настройку уведомлений.
+        allowed = {'first_name', 'last_name', 'notify_telegram'}
+        fields = []
+        for key in allowed:
+            if key in request.data:
+                setattr(user, key, request.data[key])
+                fields.append(key)
+        if fields:
+            user.save(update_fields=fields)
+    return Response(UserSerializer(user).data)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def telegram_link(request: Request) -> Response:
+    """Генерирует код привязки Telegram и возвращает инструкцию для пользователя."""
+    from django.conf import settings
+    from apps.alerts.telegram import generate_link_code, is_configured
+
+    if not is_configured():
+        return Response(
+            {'error': 'Telegram-интеграция отключена на сервере.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    code = generate_link_code(request.user)
+    bot = settings.TELEGRAM_BOT_USERNAME
+    deep_link = f'https://t.me/{bot}?start={code}' if bot else None
+    return Response({
+        'code': code,
+        'bot_username': bot,
+        'deep_link': deep_link,
+        'instructions': (
+            f'Откройте бота @{bot} в Telegram и отправьте: /start {code}'
+            if bot else
+            f'Отправьте боту сообщение: /start {code}'
+        ),
+        'expires_in_minutes': settings.TELEGRAM_LINK_CODE_TTL_MINUTES,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def telegram_status(request: Request) -> Response:
+    user = request.user
+    return Response({
+        'linked': user.telegram_linked,
+        'telegram_username': user.telegram_username,
+        'notify_telegram': user.notify_telegram,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def telegram_unlink(request: Request) -> Response:
+    user = request.user
+    user.telegram_chat_id = ''
+    user.telegram_username = ''
+    user.telegram_link_code = ''
+    user.telegram_link_expires_at = None
+    user.telegram_linked_at = None
+    user.notify_telegram = False
+    user.save(update_fields=[
+        'telegram_chat_id', 'telegram_username', 'telegram_link_code',
+        'telegram_link_expires_at', 'telegram_linked_at', 'notify_telegram',
+    ])
+    return Response({'linked': False})
+
+
+class BuildViewSet(viewsets.ViewSet):
+    """Сборка ПК пользователя. Зеркалит логику фронтового конструктора, но на бэке.
+
+    Один «текущий» build на пользователя (get_or_create). Слоты — uniquе по build+slot.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_build(self, request: Request):
+        from apps.builds.models import Build
+
+        build, _ = Build.objects.get_or_create(user=request.user)
+        return build
+
+    @action(detail=False, methods=['get'])
+    def me(self, request: Request) -> Response:
+        from .serializers import BuildSerializer
+
+        build = self._get_build(request)
+        return Response(BuildSerializer(build).data)
+
+    @action(detail=False, methods=['post'], url_path='set-slot')
+    def set_slot(self, request: Request) -> Response:
+        from apps.builds.models import BuildItem
+        from .serializers import BuildSerializer
+
+        build = self._get_build(request)
+        slot = request.data.get('slot')
+        product_id = request.data.get('product_id')
+        quantity = request.data.get('quantity', 1)
+
+        valid_slots = {c[0] for c in BuildItem.Slot.choices}
+        if slot not in valid_slots:
+            return Response({'error': 'Неизвестный слот.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not product_id:
+            return Response({'error': 'product_id обязателен.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            return Response({'error': 'Товар не найден.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Snapshot текущей лучшей цены на момент добавления (денормализованная Offer.current_price).
+        best = (
+            Offer.objects
+            .filter(product=product, current_price__gt=0)
+            .order_by('current_price')
+            .first()
+        )
+        price_snapshot = best.current_price if best else 0
+
+        BuildItem.objects.update_or_create(
+            build=build, slot=slot,
+            defaults={'product': product, 'price_snapshot': price_snapshot, 'quantity': quantity},
+        )
+        build.save(update_fields=['updated_at'])
+        return Response(BuildSerializer(build).data)
+
+    @action(detail=False, methods=['delete'], url_path='clear-slot/(?P<slot>[^/.]+)')
+    def clear_slot(self, request: Request, slot: str | None = None) -> Response:
+        from apps.builds.models import BuildItem
+        from .serializers import BuildSerializer
+
+        build = self._get_build(request)
+        BuildItem.objects.filter(build=build, slot=slot).delete()
+        build.save(update_fields=['updated_at'])
+        return Response(BuildSerializer(build).data)
+
+    @action(detail=False, methods=['post'])
+    def clear(self, request: Request) -> Response:
+        from .serializers import BuildSerializer
+
+        build = self._get_build(request)
+        build.items.all().delete()
+        build.save(update_fields=['updated_at'])
+        return Response(BuildSerializer(build).data)

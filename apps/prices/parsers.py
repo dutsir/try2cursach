@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import os
 import random
@@ -89,6 +90,71 @@ _DNS_NUDGE_ACTIVITY_JS = r"""
   try {
     document.dispatchEvent(new Event('visibilitychange'));
   } catch (e) {}
+})();
+"""
+
+
+# Анти-детект слой для Qrator. Инжектится через CDP ДО скриптов сайта на
+# каждую новую страницу. undetected_chromedriver убирает базовые «вебдрайвер»-
+# признаки, но Qrator проверяет глубже: язык, плагины, WebGL-рендерер
+# (под Xvfb это SwiftShader/llvmpipe — явный признак бота), window.chrome,
+# permissions API. Маскируем эти признаки под обычный десктопный Chrome в РФ.
+# Помогает, когда Qrator отдаёт JS-челлендж (а не жёсткий сетевой 403):
+# страница проходит проверку и получает clearance-куку.
+_DNS_STEALTH_JS = r"""
+(function () {
+  function def(obj, prop, val) {
+    try { Object.defineProperty(obj, prop, { configurable: true, get: function () { return val; } }); }
+    catch (e) {}
+  }
+  // navigator.webdriver → undefined
+  try { def(navigator, 'webdriver', undefined); } catch (e) {}
+  // Языки: русскоязычный десктоп
+  def(navigator, 'languages', ['ru-RU', 'ru', 'en-US', 'en']);
+  // Непустой список плагинов (headless/чистый профиль выдаёт пустой)
+  try {
+    var fakePlugins = [
+      { name: 'Chrome PDF Plugin' },
+      { name: 'Chrome PDF Viewer' },
+      { name: 'Native Client' }
+    ];
+    def(navigator, 'plugins', fakePlugins);
+    def(navigator, 'mimeTypes', [{ type: 'application/pdf' }]);
+  } catch (e) {}
+  // window.chrome.runtime — присутствует в реальном Chrome
+  try {
+    if (!window.chrome) { window.chrome = {}; }
+    if (!window.chrome.runtime) { window.chrome.runtime = {}; }
+  } catch (e) {}
+  // permissions.query для notifications не должен «выдавать» автоматизацию
+  try {
+    var origQuery = navigator.permissions && navigator.permissions.query;
+    if (origQuery) {
+      navigator.permissions.query = function (params) {
+        if (params && params.name === 'notifications') {
+          return Promise.resolve({ state: Notification.permission });
+        }
+        return origQuery.call(navigator.permissions, params);
+      };
+    }
+  } catch (e) {}
+  // WebGL: прячем SwiftShader/llvmpipe (Xvfb-рендерер) под обычную видеокарту
+  try {
+    var spoofGL = function (proto) {
+      if (!proto) { return; }
+      var getParam = proto.getParameter;
+      proto.getParameter = function (p) {
+        if (p === 37445) { return 'Intel Inc.'; }            // UNMASKED_VENDOR_WEBGL
+        if (p === 37446) { return 'Intel Iris OpenGL Engine'; } // UNMASKED_RENDERER_WEBGL
+        return getParam.call(this, p);
+      };
+    };
+    spoofGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+    spoofGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  } catch (e) {}
+  // hardwareConcurrency/deviceMemory — правдоподобные значения десктопа
+  try { def(navigator, 'hardwareConcurrency', 8); } catch (e) {}
+  try { def(navigator, 'deviceMemory', 8); } catch (e) {}
 })();
 """
 
@@ -683,6 +749,9 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         is_new = self._driver is None
         driver = super()._get_driver()
         if is_new:
+            if getattr(settings, 'DNS_STEALTH', True):
+                self._apply_stealth(driver)
+            self._inject_saved_cookies(driver)
             try:
                 driver.execute_cdp_cmd(
                     'Page.addScriptToEvaluateOnNewDocument',
@@ -699,6 +768,79 @@ class DNSParser(ChromeDriverMixin, BaseParser):
                     exc_info=True,
                 )
         return driver
+
+    def _apply_stealth(self, driver: Any) -> None:
+        # Анти-детект для Qrator: маскируем признаки автоматизации/Xvfb и
+        # выставляем русскоязычные HTTP-заголовки. Best-effort — ошибки CDP
+        # не должны ронять парсинг.
+        try:
+            driver.execute_cdp_cmd(
+                'Page.addScriptToEvaluateOnNewDocument',
+                {'source': _DNS_STEALTH_JS},
+            )
+            logger.info('DNS: инжектирован stealth-слой (анти-детект Qrator).')
+        except Exception:
+            logger.warning('DNS: не удалось добавить stealth-слой через CDP.', exc_info=True)
+        try:
+            driver.execute_cdp_cmd('Network.enable', {})
+            driver.execute_cdp_cmd(
+                'Network.setExtraHTTPHeaders',
+                {'headers': {'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'}},
+            )
+        except Exception:
+            logger.debug('DNS: не удалось задать Accept-Language через CDP', exc_info=True)
+
+    def _inject_saved_cookies(self, driver: Any) -> None:
+        # Инжектим clearance-куки Qrator из реального браузера (см.
+        # scripts/export_dns_cookies.py) через CDP ДО навигации, чтобы первый
+        # же запрос к DNS нёс валидную сессию и не упирался в 403.
+        path = getattr(settings, 'DNS_COOKIES_FILE', '') or ''
+        if not path or not os.path.isfile(path):
+            return
+        try:
+            with open(path, encoding='utf-8') as f:
+                cookies = json.load(f)
+        except Exception:
+            logger.warning('DNS: не удалось прочитать cookies-файл %r', path, exc_info=True)
+            return
+        if not isinstance(cookies, list) or not cookies:
+            return
+        try:
+            driver.execute_cdp_cmd('Network.enable', {})
+        except Exception:
+            pass
+        injected = 0
+        qrator = 0
+        for c in cookies:
+            name = c.get('name')
+            if not name:
+                continue
+            domain = (c.get('domain') or '').lstrip('.')
+            if not domain:
+                continue
+            params: dict[str, Any] = {
+                'name': name,
+                'value': c.get('value', ''),
+                'domain': c.get('domain'),
+                'path': c.get('path') or '/',
+                'secure': bool(c.get('secure', True)),
+                'httpOnly': bool(c.get('httpOnly', False)),
+            }
+            if c.get('expires'):
+                params['expires'] = float(c['expires'])
+            if c.get('sameSite') in ('Strict', 'Lax', 'None'):
+                params['sameSite'] = c['sameSite']
+            try:
+                driver.execute_cdp_cmd('Network.setCookie', params)
+                injected += 1
+                if 'qrator' in name.lower():
+                    qrator += 1
+            except Exception:
+                logger.debug('DNS: не удалось установить cookie %s', name, exc_info=True)
+        logger.info(
+            'DNS: инжектировано %d cookies из реального браузера (qrator clearance: %d).',
+            injected, qrator,
+        )
 
     def _wait_for_prices(
         self,

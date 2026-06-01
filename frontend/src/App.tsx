@@ -19,6 +19,7 @@ const Wishlist      = lazy(() => import('@/pages/Wishlist'))
 const Subscriptions = lazy(() => import('@/pages/Subscriptions'))
 const ProductDetail = lazy(() => import('@/pages/ProductDetail'))
 const Notifications = lazy(() => import('@/pages/Notifications'))
+const Settings      = lazy(() => import('@/pages/Settings'))
 const Login         = lazy(() => import('@/pages/Login'))
 const Register      = lazy(() => import('@/pages/Register'))
 
@@ -62,8 +63,14 @@ export default function App() {
     // Сброс React Query кэша при реальной смене аккаунта (вход/выход/другой юзер).
     // Иначе подписки/вишлист/уведомления предыдущего юзера остаются в кэше SPA
     // и показываются под другим аккаунтом без перезагрузки страницы.
-    if (prevUserIdRef.current !== undefined && prevUserIdRef.current !== id) {
+    const changed = prevUserIdRef.current !== id
+    if (prevUserIdRef.current !== undefined && changed) {
       qc.clear()
+    }
+    // Подтягиваем серверную сборку при входе/смене аккаунта (после ensureOwner,
+    // которая для нового юзера уже очистила чужие локальные слоты).
+    if (changed && id !== null) {
+      useBuildStore.getState().hydrateFromServer()
     }
     prevUserIdRef.current = id
   }, [user, loading])
@@ -103,6 +110,7 @@ export default function App() {
                 <Route path="/subscriptions" element={<Subscriptions />} />
                 <Route path="/products/:id"  element={<ProductDetail />} />
                 <Route path="/notifications" element={<Notifications />} />
+                <Route path="/settings"      element={<Settings user={user} onUserChange={setUser} />} />
               </Route>
 
               {/* Fallback redirects */}

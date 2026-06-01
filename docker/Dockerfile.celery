@@ -34,14 +34,18 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
 
 COPY docker/requirements.txt /app/requirements.txt
 
-# Обновить pip + установить torch CPU-only (200MB вместо 670MB GPU + CUDA)
-# Увеличенный timeout и retries для медленного интернета
+# Обновить pip + установить torch CPU-only (вместо GPU+CUDA сборки).
+# ВАЖНО: версия должна совпадать с веткой torch на хосте (2.12.x) и быть собрана
+# под NumPy 2.x. Старый torch 2.1.2+cpu собран под NumPy 1.x и не имеет API
+# torch.utils._pytree.register_pytree_node, который требует transformers 4.57 →
+# при numpy 2.1.3 модель эмбеддингов не грузилась, дедуп молча падал на Dice.
+# Увеличенный timeout и retries для медленного интернета.
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir \
         --timeout=600 \
         --retries=20 \
         --index-url https://download.pytorch.org/whl/cpu \
-        torch==2.1.2+cpu
+        torch==2.12.0+cpu
 
 # Установить остальные зависимости (torch уже есть, не будет переустанавливаться)
 RUN pip install --no-cache-dir \
@@ -51,8 +55,10 @@ RUN pip install --no-cache-dir \
 
 COPY . /app/
 
+RUN chmod +x /app/docker/celery-entrypoint.sh
+
 ENV DISPLAY=:99
 
-CMD Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &>/dev/null & \
-    sleep 1 && \
-    celery -A config worker --loglevel=info --concurrency=1
+# Fallback-команда (в docker-compose переопределяется). Xvfb поднимается надёжно
+# через entrypoint с проверкой готовности X-сервера, а не "выстрелил-и-забыл".
+CMD ["/app/docker/celery-entrypoint.sh", "celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=1", "-Q", "parsing_heavy"]

@@ -15,14 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY docker/requirements.txt /app/requirements.txt
 
-# Обновить pip + установить torch CPU-only (200MB вместо 670MB GPU + CUDA)
-# Увеличенный timeout и retries для медленного интернета
+# Обновить pip + установить torch CPU-only (вместо GPU+CUDA сборки).
+# ВАЖНО: версия должна совпадать с веткой torch на хосте (2.12.x) и быть собрана
+# под NumPy 2.x. Старый torch 2.1.2+cpu (NumPy 1.x ABI, без register_pytree_node)
+# ломал загрузку модели эмбеддингов с numpy 2.1.3 + transformers 4.57.
+# Увеличенный timeout и retries для медленного интернета.
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir \
         --timeout=600 \
         --retries=20 \
         --index-url https://download.pytorch.org/whl/cpu \
-        torch==2.1.2+cpu
+        torch==2.12.0+cpu
 
 # Установить остальные зависимости (torch уже есть, не будет переустанавливаться)
 RUN pip install --no-cache-dir \

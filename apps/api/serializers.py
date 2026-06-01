@@ -1,11 +1,9 @@
-from decimal import Decimal
-
 from rest_framework import serializers
 
 from apps.alerts.models import Notification, Subscription, Wishlist, WishlistItem
 from apps.core.models import User
 from apps.prices.models import PriceHistory
-from apps.products.models import Category, CategoryListing, Offer, Product, ProductFamily
+from apps.products.models import Category, CategoryListing, Offer, Product
 
 
 class CategoryListingSerializer(serializers.ModelSerializer):
@@ -37,16 +35,6 @@ class PriceHistorySerializer(serializers.ModelSerializer):
         fields = ('id', 'price', 'old_price', 'timestamp', 'is_actual', 'source')
 
 
-def _current_price_for_offer(offer: Offer) -> Decimal | None:
-    record = (
-        PriceHistory.objects
-        .filter(offer=offer, is_actual=True)
-        .order_by('-timestamp')
-        .first()
-    )
-    return record.price if record else None
-
-
 class OfferSerializer(serializers.ModelSerializer):
 
     source_display = serializers.CharField(source='get_source_display', read_only=True)
@@ -61,53 +49,44 @@ class OfferSerializer(serializers.ModelSerializer):
         )
 
     def get_current_price(self, obj: Offer) -> str | None:
-        price = _current_price_for_offer(obj)
-        return str(price) if price is not None else None
+        return str(obj.current_price) if obj.current_price is not None else None
 
     def get_old_price(self, obj: Offer) -> str | None:
-        record = (
-            PriceHistory.objects
-            .filter(offer=obj, is_actual=True)
-            .order_by('-timestamp')
-            .first()
-        )
-        return str(record.old_price) if record and record.old_price else None
+        return str(obj.current_old_price) if obj.current_old_price else None
 
 
 def _best_offer_summary(product: Product) -> dict | None:
-    actual = (
-        PriceHistory.objects
-        .filter(product=product, is_actual=True, offer__isnull=False)
-        .select_related('offer')
-        .order_by('price')
-    )
-    best = actual.first()
-    if not best or not best.offer:
-        legacy = (
-            PriceHistory.objects
-            .filter(product=product, is_actual=True)
-            .order_by('price')
-            .first()
-        )
-        if not legacy:
-            return None
+    # Читаем денормализованную Offer.current_price — без N+1 по PriceHistory.
+    # Если префетч offers есть, перебираем в памяти; иначе один запрос на оффер с ценой.
+    offers = [o for o in product.offers.all() if o.current_price is not None]
+    if offers:
+        best = min(offers, key=lambda o: o.current_price)
         return {
-            'price': str(legacy.price),
-            'old_price': str(legacy.old_price) if legacy.old_price else None,
-            'source': legacy.source,
-            'source_display': dict(PriceHistory.Source.choices).get(legacy.source, legacy.source),
-            'url': product.url,
-            'image_url': product.image_url or '',
-            'offers_count': 0,
+            'price': str(best.current_price),
+            'old_price': str(best.current_old_price) if best.current_old_price else None,
+            'source': best.source,
+            'source_display': best.get_source_display(),
+            'url': best.url,
+            'image_url': best.image_url or product.image_url or '',
+            'offers_count': len(product.offers.all()),
         }
+
+    legacy = (
+        PriceHistory.objects
+        .filter(product=product, is_actual=True)
+        .order_by('price')
+        .first()
+    )
+    if not legacy:
+        return None
     return {
-        'price': str(best.price),
-        'old_price': str(best.old_price) if best.old_price else None,
-        'source': best.offer.source,
-        'source_display': best.offer.get_source_display(),
-        'url': best.offer.url,
-        'image_url': best.offer.image_url or product.image_url or '',
-        'offers_count': product.offers.count(),
+        'price': str(legacy.price),
+        'old_price': str(legacy.old_price) if legacy.old_price else None,
+        'source': legacy.source,
+        'source_display': dict(PriceHistory.Source.choices).get(legacy.source, legacy.source),
+        'url': product.url,
+        'image_url': product.image_url or '',
+        'offers_count': 0,
     }
 
 
@@ -128,26 +107,17 @@ class ProductListSerializer(serializers.ModelSerializer):
 
 class ProductDetailSerializer(ProductListSerializer):
     offers = serializers.SerializerMethodField()
-    price_history = serializers.SerializerMethodField()
     family = serializers.SerializerMethodField()
     variant_specs = serializers.JSONField(read_only=True)
 
     class Meta(ProductListSerializer.Meta):
         fields = ProductListSerializer.Meta.fields + (
-            'offers', 'price_history', 'url', 'family', 'variant_specs',
+            'offers', 'url', 'family', 'variant_specs',
         )
 
     def get_offers(self, obj: Product) -> list[dict]:
         offers = obj.offers.all().order_by('source')
         return OfferSerializer(offers, many=True).data
-
-    def get_price_history(self, obj: Product) -> list[dict]:
-        recent = (
-            PriceHistory.objects
-            .filter(product=obj)
-            .order_by('-timestamp')[:300]
-        )
-        return PriceHistorySerializer(recent, many=True).data
 
     def get_family(self, obj: Product) -> dict | None:
         f = obj.family
@@ -156,83 +126,23 @@ class ProductDetailSerializer(ProductListSerializer):
         return {'id': f.id, 'name': f.name, 'variants_count': f.variants.count()}
 
 
-class ProductFamilyVariantSerializer(serializers.ModelSerializer):
-    """Мини-сериализатор Product как варианта внутри ProductFamily.
-
-    Для UI «конструктора»: id, ёмкость/конфиг (variant_specs), лучшая цена.
-    """
-
-    best_offer = serializers.SerializerMethodField()
-    variant_specs = serializers.JSONField(read_only=True)
-
-    class Meta:
-        model = Product
-        fields = (
-            'id', 'name', 'slug', 'vendor_code', 'image_url',
-            'variant_specs', 'is_active', 'last_parsed_at', 'best_offer',
-        )
-
-    def get_best_offer(self, obj: Product) -> dict | None:
-        return _best_offer_summary(obj)
-
-
-class ProductFamilySerializer(serializers.ModelSerializer):
-    category = CategoryMinimalSerializer(read_only=True)
-    variants = ProductFamilyVariantSerializer(many=True, read_only=True)
-    variants_count = serializers.SerializerMethodField()
-
-    class Meta:
-        model = ProductFamily
-        fields = (
-            'id', 'name', 'brand', 'model_code', 'generation', 'year',
-            'category', 'common_specs', 'is_active', 'created_at',
-            'variants_count', 'variants',
-        )
-
-    def get_variants_count(self, obj: ProductFamily) -> int:
-        return obj.variants.count()
-
-
-class ProductFamilyListSerializer(serializers.ModelSerializer):
-    """Список семей без раскрытых variants — для эффективного листинга."""
-
-    category = CategoryMinimalSerializer(read_only=True)
-    variants_count = serializers.SerializerMethodField()
-    price_range = serializers.SerializerMethodField()
-
-    class Meta:
-        model = ProductFamily
-        fields = (
-            'id', 'name', 'brand', 'model_code', 'category',
-            'variants_count', 'price_range', 'is_active', 'created_at',
-        )
-
-    def get_variants_count(self, obj: ProductFamily) -> int:
-        return obj.variants.count()
-
-    def get_price_range(self, obj: ProductFamily) -> dict | None:
-        """min/max актуальной цены среди вариантов семьи."""
-        prices = list(
-            PriceHistory.objects
-            .filter(product__family=obj, is_actual=True)
-            .values_list('price', flat=True)
-        )
-        if not prices:
-            return None
-        return {'min': str(min(prices)), 'max': str(max(prices))}
-
-
 class SubscriptionSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
+    product = ProductListSerializer(read_only=True)
+    product_id = serializers.IntegerField(write_only=True)
 
     class Meta:
         model = Subscription
-        fields = ('id', 'product', 'product_name', 'target_price', 'is_active', 'created_at')
-        read_only_fields = ('created_at',)
+        fields = (
+            'id', 'product', 'product_id', 'target_price',
+            'notify_on', 'is_active', 'last_notified_at', 'created_at',
+        )
+        read_only_fields = ('created_at', 'last_notified_at')
 
-    def validate_product(self, value: Product) -> Product:
+    def validate_product_id(self, value: int) -> int:
         user = self.context['request'].user
-        if Subscription.objects.filter(user=user, product=value).exists():
+        if not Product.objects.filter(id=value).exists():
+            raise serializers.ValidationError('Товар не найден.')
+        if Subscription.objects.filter(user=user, product_id=value).exists():
             raise serializers.ValidationError('Подписка на этот товар уже существует.')
         return value
 
@@ -242,9 +152,14 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(source='product.id', read_only=True, allow_null=True)
+    product_name = serializers.CharField(source='product.name', read_only=True, default=None)
+
     class Meta:
         model = Notification
-        fields = ('id', 'message', 'sent_at')
+        fields = ('id', 'type', 'message', 'is_read', 'product_id', 'product_name', 'sent_at')
+        # Через API клиент может менять только is_read (пометка прочитанным).
+        read_only_fields = ('type', 'message', 'product_id', 'product_name', 'sent_at')
 
 
 class WishlistItemSerializer(serializers.ModelSerializer):
@@ -267,19 +182,33 @@ class WishlistSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    telegram_linked = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'avatar')
-        read_only_fields = ('id',)
+        fields = (
+            'id', 'username', 'email', 'first_name', 'last_name', 'avatar',
+            'accepted_terms', 'notify_telegram', 'telegram_linked', 'telegram_username',
+        )
+        read_only_fields = ('id', 'accepted_terms', 'telegram_linked', 'telegram_username')
 
 
 class UserRegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
+    accepted_terms = serializers.BooleanField(write_only=True)
 
     class Meta:
         model = User
-        fields = ('username', 'email', 'password', 'password_confirm', 'first_name', 'last_name')
+        fields = (
+            'username', 'email', 'password', 'password_confirm',
+            'first_name', 'last_name', 'accepted_terms',
+        )
+
+    def validate_accepted_terms(self, value: bool) -> bool:
+        if not value:
+            raise serializers.ValidationError('Необходимо принять условия использования.')
+        return value
 
     def validate(self, data: dict) -> dict:
         if data['password'] != data.pop('password_confirm'):
@@ -287,5 +216,33 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data: dict):
+        from django.utils import timezone
+
+        validated_data.pop('accepted_terms', None)
         user = User.objects.create_user(**validated_data)
+        user.accepted_terms = True
+        user.accepted_terms_at = timezone.now()
+        user.save(update_fields=['accepted_terms', 'accepted_terms_at'])
         return user
+
+
+class BuildItemSerializer(serializers.ModelSerializer):
+    product = ProductListSerializer(read_only=True)
+
+    class Meta:
+        from apps.builds.models import BuildItem
+
+        model = BuildItem
+        fields = ('id', 'slot', 'product', 'price_snapshot', 'quantity')
+
+
+class BuildSerializer(serializers.ModelSerializer):
+    items = BuildItemSerializer(many=True, read_only=True)
+    total_price = serializers.FloatField(read_only=True)
+
+    class Meta:
+        from apps.builds.models import Build
+
+        model = Build
+        fields = ('id', 'name', 'items', 'total_price', 'created_at', 'updated_at')
+        read_only_fields = ('created_at', 'updated_at')

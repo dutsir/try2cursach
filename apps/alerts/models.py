@@ -6,6 +6,12 @@ from apps.products.models import Product
 
 
 class Subscription(BaseModel):
+
+    class NotifyOn(models.TextChoices):
+        PRICE_DROP = 'price_drop', 'Падение цены'
+        ANOMALY = 'anomaly', 'Аномалия'
+        AVAILABILITY = 'availability', 'Появление в наличии'
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -21,7 +27,14 @@ class Subscription(BaseModel):
     target_price = models.DecimalField(
         'Целевая цена', max_digits=12, decimal_places=2,
     )
+    notify_on = models.CharField(
+        'Условие уведомления', max_length=16,
+        choices=NotifyOn.choices, default=NotifyOn.PRICE_DROP,
+    )
     is_active = models.BooleanField('Активна', default=True)
+    # Момент последнего срабатывания — для cooldown (не уведомляем повторно
+    # каждый прогон, пока цена держится ниже целевой).
+    last_notified_at = models.DateTimeField('Последнее уведомление', null=True, blank=True)
 
     class Meta:
         verbose_name = 'Подписка'
@@ -33,6 +46,13 @@ class Subscription(BaseModel):
 
 
 class Notification(BaseModel):
+
+    class Type(models.TextChoices):
+        PRICE_DROP = 'price_drop', 'Падение цены'
+        ANOMALY = 'anomaly', 'Аномалия'
+        AVAILABILITY = 'availability', 'Появление в наличии'
+        INFO = 'info', 'Информация'
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -47,13 +67,29 @@ class Notification(BaseModel):
         related_name='notifications',
         verbose_name='Подписка',
     )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='notifications',
+        verbose_name='Товар',
+    )
+    type = models.CharField(
+        'Тип', max_length=16, choices=Type.choices,
+        default=Type.PRICE_DROP, db_index=True,
+    )
     message = models.TextField('Сообщение')
+    is_read = models.BooleanField('Прочитано', default=False, db_index=True)
     sent_at = models.DateTimeField('Отправлено', auto_now_add=True)
 
     class Meta:
         verbose_name = 'Уведомление'
         verbose_name_plural = 'Уведомления'
         ordering = ['-sent_at']
+        indexes = [
+            models.Index(fields=['user', 'is_read']),
+        ]
 
     def __str__(self) -> str:
         return f'Уведомление для {self.user} ({self.sent_at:%d.%m.%Y %H:%M})'

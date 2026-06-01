@@ -22,6 +22,11 @@ PROFILE_DIR="${PROFILE_DIR:-$PROJECT_DIR/var/chrome_profiles/dns}"
 
 mkdir -p "$PROFILE_DIR"
 
+# Снимаем stale Singleton-локи. Их оставляет упавший Chrome, а в Docker —
+# контейнерный Chrome (lock содержит hostname контейнера). Хостовый Chrome видит
+# «чужой» hostname и отказывается стартовать («profile in use on another computer»).
+rm -f "$PROFILE_DIR"/Singleton* 2>/dev/null || true
+
 echo "🔥 Прогреваю Chrome-профиль для DNS"
 echo "    Профиль: $PROFILE_DIR"
 echo ""

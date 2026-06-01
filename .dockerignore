@@ -1,0 +1,27 @@
+# Chrome-профили: монтируются в рантайме (bind volume), огромные и часто
+# root-owned (контейнерный Chrome под root) → ломают передачу build-контекста
+# ("permission denied" у sender'а). В образе им не место.
+var/chrome_profiles/
+var/
+
+# VCS / Python / окружение
+.git/
+.gitignore
+**/__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+
+# Node / фронт (собирается в своём Dockerfile)
+frontend/node_modules/
+node_modules/
+
+# Локальные секреты и логи
+.env
+*.log
+
+# IDE
+.idea/
+.vscode/

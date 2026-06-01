@@ -87,6 +87,7 @@ class CategoryListing(BaseModel):
         OZON = 'ozon', 'Ozon'
         WB = 'wb', 'Wildberries'
         REGARD = 'regard', 'Регард'
+        MVIDEO = 'mvideo', 'М.Видео'
 
     category = models.ForeignKey(
         Category,
@@ -292,6 +293,7 @@ class Offer(BaseModel):
         CITILINK = 'citilink', 'Ситилинк'
         WB = 'wb', 'Wildberries'
         REGARD = 'regard', 'Регард'
+        MVIDEO = 'mvideo', 'М.Видео'
 
     product = models.ForeignKey(
         Product,
@@ -336,6 +338,17 @@ class Offer(BaseModel):
     image_url = models.URLField('Картинка оффера', max_length=1024, blank=True, default='')
     is_available = models.BooleanField('В наличии', default=True)
     last_seen_at = models.DateTimeField('Последний успешный парсинг', null=True, blank=True)
+
+    # Денормализованная актуальная цена — зеркало последней PriceHistory(is_actual=True)
+    # для этого оффера. Источник истины остаётся PriceHistory; эти поля только
+    # убирают N+1 при листинге (см. apps/prices/tasks.py:task_save_price).
+    current_price = models.DecimalField(
+        'Актуальная цена', max_digits=12, decimal_places=2, null=True, blank=True,
+    )
+    current_old_price = models.DecimalField(
+        'Актуальная цена до скидки', max_digits=12, decimal_places=2, null=True, blank=True,
+    )
+    price_updated_at = models.DateTimeField('Цена обновлена', null=True, blank=True)
 
     extra_metadata = models.JSONField(
         'Доп. метаданные источника',

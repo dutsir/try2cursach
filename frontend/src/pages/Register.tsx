@@ -21,6 +21,7 @@ export default function Register({ onRegister }: RegisterProps) {
     password: '',
     password_confirm: '',
   })
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
@@ -45,8 +46,17 @@ export default function Register({ onRegister }: RegisterProps) {
       return
     }
 
+    if (!acceptedTerms) {
+      setError('Необходимо принять условия использования')
+      setLoading(false)
+      return
+    }
+
     try {
-      const user = await api.post<UserType>('/api/auth/register/', formData)
+      const user = await api.post<UserType>('/api/auth/register/', {
+        ...formData,
+        accepted_terms: acceptedTerms,
+      })
       toast('Регистрация успешна', 'success')
       onRegister?.(user)
       setTimeout(() => navigate('/'), 300)
@@ -175,6 +185,20 @@ export default function Register({ onRegister }: RegisterProps) {
                 required
               />
             </div>
+
+            <label className="flex cursor-pointer items-start gap-2.5 text-sm text-scout-muted">
+              <input
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={e => { setAcceptedTerms(e.target.checked); setError(null) }}
+                className="mt-0.5 h-4 w-4 flex-shrink-0 cursor-pointer accent-scout-accent"
+                required
+              />
+              <span>
+                я принимаю условия использования и даю согласие на обработку данных.
+                дублирование уведомлений о ценах в Telegram можно подключить в настройках.
+              </span>
+            </label>
 
             <Button type="submit" loading={loading} className="mt-2 w-full">
               зарегистрироваться

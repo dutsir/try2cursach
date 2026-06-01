@@ -1,4 +1,4 @@
-export type Source = 'dns' | 'citilink' | 'ozon'
+export type Source = 'dns' | 'citilink' | 'ozon' | 'wb' | 'regard' | 'mvideo'
 
 export interface User {
   id: number
@@ -7,6 +7,10 @@ export interface User {
   first_name: string
   last_name: string
   avatar: string | null
+  accepted_terms?: boolean
+  notify_telegram?: boolean
+  telegram_linked?: boolean
+  telegram_username?: string
 }
 
 export interface Category {
@@ -81,30 +85,28 @@ export interface PriceStats {
 
 export type PriceWindow = '7d' | '30d' | 'all'
 
+export type NotifyOn = 'price_drop' | 'anomaly' | 'availability'
+export type NotificationType = 'price_drop' | 'anomaly' | 'availability' | 'info'
+
 export interface Subscription {
   id: number
   product: Product
+  product_id?: number
   target_price: number
+  notify_on: NotifyOn
   is_active: boolean
+  last_notified_at: string | null
+  created_at: string
 }
 
 export interface Notification {
   id: number
+  type: NotificationType
   message: string
+  is_read: boolean
+  product_id: number | null
+  product_name: string | null
   sent_at: string
-}
-
-export type AnomalyType = 'spike' | 'manipulation' | 'cyclic'
-export type Severity = 'low' | 'medium' | 'high'
-
-export interface Anomaly {
-  id: number
-  product: Product
-  detected_at: string
-  anomaly_type: AnomalyType
-  severity: Severity
-  description: string
-  resolved: boolean
 }
 
 export interface WishlistItem {

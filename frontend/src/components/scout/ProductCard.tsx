@@ -15,7 +15,6 @@ export interface ScoutProductCardData {
   series: number[]
   stock?: boolean
   lastSeen?: string
-  anomaly?: boolean
   imageUrl?: string | null
 }
 
@@ -32,12 +31,6 @@ export function ScoutProductCard({ product, onClick }: ScoutProductCardProps) {
       onClick={onClick}
       className="text-left bg-scout-elevated border border-scout-subtle hover:border-scout-border rounded-scout-lg p-5 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 relative w-full"
     >
-      {product.anomaly && (
-        <div className="absolute top-3 right-3 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-scout-warning bg-scout-warning/10 border border-scout-warning/30 rounded-[3px]">
-          аномалия
-        </div>
-      )}
-
       <div className="flex items-center gap-2">
         <MarketplaceTag source={product.source} />
         {product.stock === false && (

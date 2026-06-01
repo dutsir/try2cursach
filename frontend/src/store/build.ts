@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { buildsApi, type Build } from '@/api/builds'
 
 export type SlotKey = 'cpu' | 'mb' | 'gpu' | 'ram' | 'psu' | 'case' | 'ssd' | 'hdd'
 
@@ -25,6 +26,25 @@ interface BuildState {
   filledCount: () => number
   /** Привязывает сборку к юзеру; при смене аккаунта очищает чужую сборку. */
   ensureOwner: (userId: number | null) => void
+  /** Загружает сборку с сервера и заменяет локальные слоты (для авторизованного юзера). */
+  hydrateFromServer: () => Promise<void>
+}
+
+const SLOT_KEYS: SlotKey[] = ['cpu', 'mb', 'gpu', 'ram', 'psu', 'case', 'ssd', 'hdd']
+
+function buildToSlots(build: Build): Partial<Record<SlotKey, BuildSlotItem>> {
+  const slots: Partial<Record<SlotKey, BuildSlotItem>> = {}
+  for (const item of build.items) {
+    if (!SLOT_KEYS.includes(item.slot as SlotKey)) continue
+    slots[item.slot as SlotKey] = {
+      productId: item.product.id,
+      name: item.product.name,
+      brand: item.product.brand,
+      imageUrl: item.product.best_offer?.image_url || '',
+      price: Number(item.price_snapshot) || 0,
+    }
+  }
+  return slots
 }
 
 export const useBuildStore = create<BuildState>()(
@@ -33,16 +53,29 @@ export const useBuildStore = create<BuildState>()(
       ownerId: null,
       slots: {},
 
-      setSlot: (slot, item) =>
-        set({ slots: { ...get().slots, [slot]: item } }),
+      setSlot: (slot, item) => {
+        set({ slots: { ...get().slots, [slot]: item } })
+        // Write-through на сервер для авторизованного юзера (optimistic, без блокировки UI).
+        if (get().ownerId !== null) {
+          buildsApi.setSlot(slot, item.productId).catch(() => {})
+        }
+      },
 
       clearSlot: (slot) => {
         const next = { ...get().slots }
         delete next[slot]
         set({ slots: next })
+        if (get().ownerId !== null) {
+          buildsApi.clearSlot(slot).catch(() => {})
+        }
       },
 
-      clearAll: () => set({ slots: {} }),
+      clearAll: () => {
+        set({ slots: {} })
+        if (get().ownerId !== null) {
+          buildsApi.clear().catch(() => {})
+        }
+      },
 
       totalPrice: () => {
         const slots = get().slots
@@ -63,6 +96,15 @@ export const useBuildStore = create<BuildState>()(
           return
         }
         set({ ownerId: userId, slots: {} })
+      },
+
+      hydrateFromServer: async () => {
+        try {
+          const build = await buildsApi.mine()
+          set({ slots: buildToSlots(build) })
+        } catch {
+          // нет сети/не авторизован — остаёмся на локальной сборке
+        }
       },
     }),
     {

@@ -22,37 +22,14 @@ function StatTile({ label, value, sub, color = '#F5F5F5' }: StatTileProps) {
 
 interface DashStatsProps {
   tracked: number
-  avgSavingPct?: number
-  parsesPerDay?: number
-  anomalies?: number
+  offersCount?: number
 }
 
-export function DashStats({
-  tracked,
-  avgSavingPct = 0,
-  parsesPerDay = 0,
-  anomalies = 0,
-}: DashStatsProps) {
+export function DashStats({ tracked, offersCount = 0 }: DashStatsProps) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-      <StatTile label="Отслеживается" value={tracked} sub="товаров" />
-      <StatTile
-        label="Средняя экономия"
-        value={`${avgSavingPct}%`}
-        sub="за 30 дней"
-        color="#10B981"
-      />
-      <StatTile
-        label="Парсингов / день"
-        value={parsesPerDay}
-        sub="≈ 1 раз в 4 часа"
-      />
-      <StatTile
-        label="Аномалий найдено"
-        value={anomalies}
-        sub="за 7 дней"
-        color="#F59E0B"
-      />
+    <div className="grid grid-cols-2 gap-4 mb-8">
+      <StatTile label="Товаров в каталоге" value={tracked.toLocaleString('ru-RU')} sub="всего в базе" />
+      <StatTile label="Офферов" value={offersCount.toLocaleString('ru-RU')} sub="из всех источников" />
     </div>
   )
 }

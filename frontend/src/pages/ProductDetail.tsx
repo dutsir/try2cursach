@@ -204,7 +204,7 @@ export default function ProductDetail() {
                       )}
 
                       <div className="text-right">
-                        <p className="font-semibold text-scout-text">{offer.current_price ? formatPrice(offer.current_price) : 'не число ₽'}</p>
+                        <p className="font-semibold text-scout-text">{formatPrice(offer.current_price)}</p>
                         {offer.old_price && (
                           <p className="text-xs text-scout-dim line-through">{formatPrice(offer.old_price)}</p>
                         )}
