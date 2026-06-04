@@ -10,9 +10,11 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { parseApiError } from '@/api/client'
 import { productsApi } from '@/api/products'
+import { QueryError } from '@/components/ui/QueryError'
 import { subscriptionsApi } from '@/api/subscriptions'
-import { formatPrice, formatRelativeDate, SOURCE_LABELS, SOURCE_COLORS, discount, cn } from '@/lib/utils'
+import { formatPrice, formatRelativeDate, SOURCE_LABELS, SOURCE_COLORS, discount, cn, getOfferPrice, getOfferOldPrice } from '@/lib/utils'
 import type { PriceWindow } from '@/types'
 
 export default function ProductDetail() {
@@ -21,7 +23,7 @@ export default function ProductDetail() {
   const [subscribeOpen, setSubscribeOpen] = useState(false)
   const [priceWindow, setPriceWindow] = useState<PriceWindow>('30d')
 
-  const { data: product, isLoading } = useQuery({
+  const { data: product, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['product', productId],
     queryFn: () => productsApi.detail(productId),
     enabled: !!productId,
@@ -42,6 +44,14 @@ export default function ProductDetail() {
   const subscription = subs?.results.find(s => s.product.id === productId)
 
   if (isLoading) return <PageSpinner />
+  if (isError) {
+    return (
+      <QueryError
+        message={parseApiError(error, 'Не удалось загрузить товар')}
+        onRetry={() => refetch()}
+      />
+    )
+  }
   if (!product) return (
     <div className="flex flex-col items-center gap-4 py-24 text-scout-dim">
       <Package size={56} strokeWidth={1} />
@@ -102,16 +112,11 @@ export default function ProductDetail() {
 
                   {bestOffer && (
                     <div className="mt-auto flex flex-wrap items-center gap-3">
-                      <span className="text-3xl font-bold text-scout-text">{formatPrice(bestOffer.current_price ?? bestOffer.price)}</span>
-                      {bestOffer.old_price && (
+                      <span className="text-3xl font-bold text-scout-text">{formatPrice(getOfferPrice(bestOffer))}</span>
+                      {getOfferOldPrice(bestOffer) !== null && (
                         <>
-                          <span className="text-lg text-scout-dim line-through">{formatPrice(bestOffer.old_price)}</span>
-                          {bestOffer.price && bestOffer.old_price && (
-                            <Badge variant="success">-{discount(
-                              typeof bestOffer.price === 'string' ? parseFloat(bestOffer.price) : bestOffer.price,
-                              typeof bestOffer.old_price === 'string' ? parseFloat(bestOffer.old_price) : bestOffer.old_price
-                            )}%</Badge>
-                          )}
+                          <span className="text-lg text-scout-dim line-through">{formatPrice(getOfferOldPrice(bestOffer))}</span>
+                          <Badge variant="success">-{discount(getOfferPrice(bestOffer), getOfferOldPrice(bestOffer))}%</Badge>
                         </>
                       )}
                     </div>

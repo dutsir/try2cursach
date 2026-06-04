@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Settings as SettingsIcon, Send, Link2, Unlink, Copy, Check, Mail, RefreshCw, CheckCircle } from 'lucide-react'
+import { Settings as SettingsIcon, Send, Link2, Unlink, Copy, Check, Mail, RefreshCw, CheckCircle, KeyRound, AtSign } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useToast } from '@/components/ui/Toast'
 import { accountApi, type TelegramLinkInfo, type TelegramStatus } from '@/api/account'
-import { ApiError } from '@/api/client'
+import { ApiError, parseApiError } from '@/api/client'
 import type { User } from '@/types'
 
 interface SettingsProps {
@@ -26,7 +26,7 @@ export default function Settings({ user, onUserChange }: SettingsProps) {
   const resendVerify = useMutation({
     mutationFn: () => accountApi.resendVerification(),
     onSuccess: () => toast('Письмо отправлено — проверьте почту', 'success'),
-    onError: (err: any) => toast(err?.response?.data?.error ?? 'Не удалось отправить письмо', 'error'),
+    onError: (err: unknown) => toast(parseApiError(err, 'Не удалось отправить письмо'), 'error'),
   })
 
   const toggleNotifyEmail = async (value: boolean) => {
@@ -39,10 +39,64 @@ export default function Settings({ user, onUserChange }: SettingsProps) {
     }
   }
 
+  // Смена пароля
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState('')
+  const [changingPassword, setChangingPassword] = useState(false)
+
+  // Смена email
+  const [newEmail, setNewEmail] = useState('')
+  const [emailPassword, setEmailPassword] = useState('')
+  const [changingEmail, setChangingEmail] = useState(false)
+
   const [tg, setTg] = useState<TelegramStatus | null>(null)
   const [linkInfo, setLinkInfo] = useState<TelegramLinkInfo | null>(null)
   const [tgLoading, setTgLoading] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  const changePassword = async () => {
+    if (newPassword.length < 8) {
+      toast('Новый пароль должен быть не короче 8 символов', 'error')
+      return
+    }
+    if (newPassword !== newPasswordConfirm) {
+      toast('Пароли не совпадают', 'error')
+      return
+    }
+    setChangingPassword(true)
+    try {
+      const res = await accountApi.changePassword(currentPassword, newPassword, newPasswordConfirm)
+      toast(res.message ?? 'Пароль изменён', 'success')
+      setCurrentPassword('')
+      setNewPassword('')
+      setNewPasswordConfirm('')
+    } catch (e) {
+      toast(parseApiError(e, 'Не удалось изменить пароль'), 'error')
+    } finally {
+      setChangingPassword(false)
+    }
+  }
+
+  const changeEmail = async () => {
+    if (!newEmail.includes('@')) {
+      toast('Введите корректный email', 'error')
+      return
+    }
+    setChangingEmail(true)
+    try {
+      const updated = await accountApi.changeEmail(newEmail, emailPassword)
+      onUserChange(updated)
+      qc.invalidateQueries({ queryKey: ['me'] })
+      toast('Email изменён — проверьте новую почту для подтверждения', 'success')
+      setNewEmail('')
+      setEmailPassword('')
+    } catch (e) {
+      toast(parseApiError(e, 'Не удалось изменить email'), 'error')
+    } finally {
+      setChangingEmail(false)
+    }
+  }
 
   useEffect(() => {
     accountApi.telegramStatus().then(setTg).catch(() => {})
@@ -146,7 +200,7 @@ export default function Settings({ user, onUserChange }: SettingsProps) {
               <label className="scout-caption mb-2 block">email</label>
               <Input type="email" value={user?.email ?? ''} disabled />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="scout-caption mb-2 block">имя</label>
                 <Input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Иван" />
@@ -158,6 +212,99 @@ export default function Settings({ user, onUserChange }: SettingsProps) {
             </div>
             <div>
               <Button onClick={saveProfile} loading={savingProfile}>Сохранить</Button>
+            </div>
+          </div>
+        </Card>
+
+        {/* Смена пароля */}
+        <Card className="p-6">
+          <div className="flex items-center gap-2">
+            <KeyRound size={18} className="text-scout-accent" />
+            <h2 className="text-lg font-semibold text-scout-text">Сменить пароль</h2>
+          </div>
+          <div className="mt-4 flex flex-col gap-4">
+            <div>
+              <label className="scout-caption mb-2 block">текущий пароль</label>
+              <Input
+                type="password"
+                value={currentPassword}
+                onChange={e => setCurrentPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="scout-caption mb-2 block">новый пароль</label>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  placeholder="не менее 8 символов"
+                  autoComplete="new-password"
+                />
+              </div>
+              <div>
+                <label className="scout-caption mb-2 block">повторите пароль</label>
+                <Input
+                  type="password"
+                  value={newPasswordConfirm}
+                  onChange={e => setNewPasswordConfirm(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+            <div>
+              <Button
+                onClick={changePassword}
+                loading={changingPassword}
+                disabled={!currentPassword || !newPassword || !newPasswordConfirm}
+              >
+                Изменить пароль
+              </Button>
+            </div>
+          </div>
+        </Card>
+
+        {/* Смена email */}
+        <Card className="p-6">
+          <div className="flex items-center gap-2">
+            <AtSign size={18} className="text-scout-accent" />
+            <h2 className="text-lg font-semibold text-scout-text">Сменить email</h2>
+          </div>
+          <p className="mt-1 text-sm text-scout-muted">
+            После смены потребуется подтвердить новую почту по ссылке из письма.
+          </p>
+          <div className="mt-4 flex flex-col gap-4">
+            <div>
+              <label className="scout-caption mb-2 block">новый email</label>
+              <Input
+                type="email"
+                value={newEmail}
+                onChange={e => setNewEmail(e.target.value)}
+                placeholder="new@example.com"
+                autoComplete="email"
+              />
+            </div>
+            <div>
+              <label className="scout-caption mb-2 block">текущий пароль</label>
+              <Input
+                type="password"
+                value={emailPassword}
+                onChange={e => setEmailPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+            </div>
+            <div>
+              <Button
+                onClick={changeEmail}
+                loading={changingEmail}
+                disabled={!newEmail || !emailPassword}
+              >
+                Изменить email
+              </Button>
             </div>
           </div>
         </Card>

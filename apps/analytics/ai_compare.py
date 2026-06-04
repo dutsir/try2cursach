@@ -18,10 +18,8 @@ from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
-GEMINI_URL = (
-    'https://generativelanguage.googleapis.com/v1beta/models/'
-    '{model}:generateContent?key={api_key}'
-)
+DEFAULT_GEMINI_BASE = 'https://generativelanguage.googleapis.com'
+GEMINI_URL = '{base}/v1beta/models/{model}:generateContent?key={api_key}'
 
 DEFAULT_MODEL = 'gemini-2.0-flash'
 REQUEST_TIMEOUT = 15  # секунд
@@ -120,7 +118,8 @@ def _call_gemini(prompt: str) -> str:
         raise AIServiceError('GEMINI_API_KEY не настроен в .env')
 
     model = getattr(settings, 'GEMINI_MODEL', DEFAULT_MODEL)
-    url = GEMINI_URL.format(model=model, api_key=api_key)
+    base = getattr(settings, 'GEMINI_BASE_URL', DEFAULT_GEMINI_BASE).rstrip('/')
+    url = GEMINI_URL.format(base=base, model=model, api_key=api_key)
 
     payload = {
         'contents': [{

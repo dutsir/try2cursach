@@ -3,12 +3,21 @@ import { persist } from 'zustand/middleware'
 
 const MAX_ITEMS = 4
 
+/** Краткая категория товара — нужна, чтобы держать сравнение в рамках одной категории. */
+export interface CompareCategory {
+  id: number
+  name: string
+}
+
 interface CompareState {
   ownerId: number | null
   ids: number[]
-  add: (id: number) => { ok: boolean; reason?: string }
+  /** Категория, к которой «привязан» текущий список. null = список пуст. */
+  categoryId: number | null
+  categoryName: string | null
+  add: (id: number, category: CompareCategory) => { ok: boolean; reason?: string }
   remove: (id: number) => void
-  toggle: (id: number) => { ok: boolean; reason?: string }
+  toggle: (id: number, category: CompareCategory) => { ok: boolean; reason?: string }
   clear: () => void
   has: (id: number) => boolean
   /** Привязывает список к юзеру; при смене аккаунта очищает чужой список. */
@@ -20,31 +29,47 @@ export const useCompareStore = create<CompareState>()(
     (set, get) => ({
       ownerId: null,
       ids: [],
+      categoryId: null,
+      categoryName: null,
 
-      add: (id) => {
-        const cur = get().ids
-        if (cur.includes(id)) return { ok: true }
-        if (cur.length >= MAX_ITEMS) {
+      add: (id, category) => {
+        const { ids, categoryId, categoryName } = get()
+        if (ids.includes(id)) return { ok: true }
+        if (ids.length >= MAX_ITEMS) {
           return { ok: false, reason: `Можно сравнивать не более ${MAX_ITEMS} товаров` }
         }
-        set({ ids: [...cur, id] })
+        // Первый товар задаёт категорию списка; дальше пускаем только её же.
+        if (ids.length && categoryId !== null && category.id !== categoryId) {
+          return {
+            ok: false,
+            reason: `Сравнивать можно только товары одной категории (выбрана «${categoryName}»). Очисти сравнение, чтобы начать заново.`,
+          }
+        }
+        set({
+          ids: [...ids, id],
+          categoryId: category.id,
+          categoryName: category.name,
+        })
         return { ok: true }
       },
 
       remove: (id) => {
-        set({ ids: get().ids.filter(x => x !== id) })
+        const next = get().ids.filter(x => x !== id)
+        set(next.length
+          ? { ids: next }
+          : { ids: next, categoryId: null, categoryName: null })
       },
 
-      toggle: (id) => {
+      toggle: (id, category) => {
         const cur = get().ids
         if (cur.includes(id)) {
-          set({ ids: cur.filter(x => x !== id) })
+          get().remove(id)
           return { ok: true }
         }
-        return get().add(id)
+        return get().add(id, category)
       },
 
-      clear: () => set({ ids: [] }),
+      clear: () => set({ ids: [], categoryId: null, categoryName: null }),
 
       has: (id) => get().ids.includes(id),
 
@@ -58,12 +83,12 @@ export const useCompareStore = create<CompareState>()(
           set({ ownerId: userId })
           return
         }
-        set({ ownerId: userId, ids: [] })
+        set({ ownerId: userId, ids: [], categoryId: null, categoryName: null })
       },
     }),
     {
       name: 'pricewatch:compare',
-      version: 2,
+      version: 3,
     },
   ),
 )

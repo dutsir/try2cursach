@@ -7,9 +7,33 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/** Оффер из списка (price) или карточки (current_price). */
+export type PriceLike = {
+  price?: number | string | null
+  current_price?: number | string | null
+  old_price?: number | string | null
+} | null | undefined
+
+export function parsePriceValue(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (!Number.isFinite(num) || num <= 0) return null
+  return num
+}
+
+export function getOfferPrice(offer: PriceLike): number | null {
+  if (!offer) return null
+  return parsePriceValue(offer.price) ?? parsePriceValue(offer.current_price)
+}
+
+export function getOfferOldPrice(offer: PriceLike): number | null {
+  if (!offer) return null
+  return parsePriceValue(offer.old_price)
+}
+
 export function formatPrice(price: number | string | null | undefined): string {
-  if (!price) return '—'
-  const num = typeof price === 'string' ? parseFloat(price) : price
+  const num = parsePriceValue(price)
+  if (num === null) return '—'
   return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(num)
 }
 
@@ -30,10 +54,9 @@ export function formatDate(dateStr: string): string {
 }
 
 export function discount(price?: number | string | null, oldPrice?: number | string | null): number {
-  if (!price || !oldPrice) return 0
-  const p = typeof price === 'string' ? parseFloat(price) : price
-  const op = typeof oldPrice === 'string' ? parseFloat(oldPrice) : oldPrice
-  if (!p || !op) return 0
+  const p = parsePriceValue(price)
+  const op = parsePriceValue(oldPrice)
+  if (p === null || op === null || op <= p) return 0
   return Math.round(((op - p) / op) * 100)
 }
 

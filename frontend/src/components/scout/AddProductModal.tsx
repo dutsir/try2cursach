@@ -1,30 +1,45 @@
 import { useState } from 'react'
-import { X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { Search, X, Loader2 } from 'lucide-react'
 import { ImagePlaceholder } from './ImagePlaceholder'
 import { MarketplaceTag } from './MarketplaceTag'
-
-type Stage = 'empty' | 'loading' | 'preview' | 'error'
+import { productsApi } from '@/api/products'
+import { useDebounce } from '@/hooks/useDebounce'
+import { formatPrice } from '@/lib/utils'
 
 interface AddProductModalProps {
   onClose: () => void
-  onSubmit?: (url: string) => void
 }
 
-const SUPPORTED = ['wildberries', 'ozon', 'dns', 'citilink', 'regard']
+export function AddProductModal({ onClose }: AddProductModalProps) {
+  const navigate = useNavigate()
+  const [query, setQuery] = useState('')
+  const debounced = useDebounce(query.trim(), 350)
+  const active = debounced.length >= 2
 
-export function AddProductModal({ onClose, onSubmit }: AddProductModalProps) {
-  const [url, setUrl] = useState('')
-  const [stage, setStage] = useState<Stage>('empty')
+  const { data, isFetching } = useQuery({
+    queryKey: ['catalog-lookup', debounced],
+    queryFn: () => productsApi.list({ search: debounced, page: 1, page_size: 8 }),
+    enabled: active,
+    staleTime: 60_000,
+  })
+  const results = data?.results ?? []
+  const total = data?.count ?? 0
 
-  function handleCheck() {
-    if (!url) return
-    setStage('loading')
-    setTimeout(() => setStage('preview'), 600)
+  function openProduct(id: number) {
+    navigate(`/products/${id}`)
+    onClose()
+  }
+
+  function openCatalog() {
+    navigate(`/catalog?search=${encodeURIComponent(debounced)}`)
+    onClose()
   }
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[12vh] animate-fade-in"
       style={{ background: 'rgba(10,10,10,0.7)', backdropFilter: 'blur(8px)' }}
       onClick={onClose}
     >
@@ -34,95 +49,101 @@ export function AddProductModal({ onClose, onSubmit }: AddProductModalProps) {
       >
         <div className="flex items-start justify-between">
           <div>
-            <div className="scout-caption">new</div>
+            <div className="scout-caption">catalog</div>
             <h2 className="mt-1.5 font-display text-[32px] font-bold tracking-[-0.02em] lowercase text-scout-text">
-              add product
+              найти в каталоге
             </h2>
+            <p className="mt-1.5 text-[13px] text-scout-muted max-w-[420px]">
+              проверь, есть ли этот товар или его аналог — мы уже отслеживаем цены по нескольким магазинам.
+            </p>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-scout text-scout-muted hover:bg-scout-subtle hover:text-scout-text border border-scout-subtle flex items-center justify-center transition-colors"
+            className="w-8 h-8 shrink-0 rounded-scout text-scout-muted hover:bg-scout-subtle hover:text-scout-text border border-scout-subtle flex items-center justify-center transition-colors"
           >
             <X size={14} />
           </button>
         </div>
 
         <div className="mt-7">
-          <label className="text-[11px] text-scout-muted uppercase tracking-[0.1em]">
-            ссылка на товар
-          </label>
-          <div className="mt-2 flex bg-scout-bg border border-scout-border rounded-scout p-1">
+          <div className="flex items-center gap-2 bg-scout-bg border border-scout-border rounded-scout px-3 h-12 focus-within:border-scout-accent/50 transition-colors">
+            <Search size={15} className="text-scout-dim shrink-0" />
             <input
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              placeholder="paste a link from wildberries, ozon, dns…"
-              className="flex-1 bg-transparent border-none outline-none px-3 py-3 text-sm text-scout-text font-mono placeholder:text-scout-dim"
+              autoFocus
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="название или артикул товара…"
+              className="flex-1 bg-transparent outline-none border-none text-sm text-scout-text placeholder:text-scout-dim"
             />
-            <button
-              onClick={handleCheck}
-              className="px-5 bg-scout-accent hover:bg-scout-accent-hover text-scout-bg text-xs font-semibold rounded-[3px] transition-colors"
-            >
-              check
-            </button>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-3 items-center text-[11px] text-scout-dim">
-            <span>supported:</span>
-            {SUPPORTED.map((s, i) => (
-              <span key={s} className="text-scout-muted">
-                {s}{i < SUPPORTED.length - 1 ? '  ·' : ''}
-              </span>
-            ))}
+            {isFetching && <Loader2 size={14} className="animate-spin text-scout-dim shrink-0" />}
           </div>
         </div>
 
-        {stage === 'preview' && (
-          <div className="mt-6 p-5 bg-scout-bg rounded-scout-lg" style={{ border: '1px solid rgba(168,85,247,0.3)' }}>
-            <div className="flex items-center gap-2 text-[11px] text-scout-success uppercase tracking-[0.1em]">
-              <span className="w-1.5 h-1.5 rounded-full bg-scout-success" />
-              parsed successfully · 1.2s
-            </div>
-            <div className="mt-4 flex gap-4">
-              <ImagePlaceholder width={88} height={88} label="img" />
-              <div className="flex-1">
-                <MarketplaceTag source="wb" />
-                <div className="mt-2 text-[15px] font-semibold text-scout-text">
-                  Предпросмотр товара
+        {active && (
+          <div className="mt-5">
+            {results.length > 0 ? (
+              <>
+                <div className="divide-y divide-scout-subtle border border-scout-subtle rounded-scout-lg overflow-hidden">
+                  {results.map(p => {
+                    const offer = p.best_offer
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => openProduct(p.id)}
+                        className="flex w-full items-center gap-3.5 p-3 text-left transition-colors hover:bg-scout-subtle/40"
+                      >
+                        <ImagePlaceholder
+                          width={48}
+                          height={48}
+                          label="img"
+                          src={offer?.image_url}
+                          className="shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="line-clamp-1 text-[13px] text-scout-text">
+                            {p.brand && <span className="font-semibold uppercase mr-1.5 text-scout-muted">{p.brand}</span>}
+                            {p.name}
+                          </div>
+                          <div className="mt-1 flex items-center gap-2">
+                            {offer && <MarketplaceTag source={offer.source} />}
+                            <span className="text-[11px] text-scout-dim">{p.category.name}</span>
+                          </div>
+                        </div>
+                        {offer?.price != null && (
+                          <span className="shrink-0 font-sans text-sm font-bold text-scout-accent scout-tabnums">
+                            {formatPrice(offer.price)}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
-                <div className="mt-2.5 flex items-baseline gap-2.5">
-                  <span className="font-sans text-[22px] font-bold text-scout-accent scout-tabnums">
-                    — ₽
-                  </span>
-                  <span className="text-xs text-scout-dim line-through">— ₽</span>
-                </div>
+                {total > results.length && (
+                  <button
+                    onClick={openCatalog}
+                    className="mt-3 w-full rounded-scout border border-scout-subtle bg-scout-bg py-2.5 text-[12px] text-scout-muted transition-colors hover:border-scout-accent/50 hover:text-scout-accent"
+                  >
+                    показать все {total.toLocaleString('ru-RU')} в каталоге
+                  </button>
+                )}
+              </>
+            ) : !isFetching ? (
+              <div className="flex flex-col items-center gap-2 rounded-scout-lg border border-dashed border-scout-subtle py-10 text-center">
+                <Search size={28} strokeWidth={1.5} className="text-scout-dim" />
+                <p className="text-sm text-scout-text">ничего не нашли</p>
+                <p className="max-w-[320px] text-xs text-scout-muted">
+                  такого товара пока нет в каталоге. попробуй изменить запрос или поискать аналог по названию.
+                </p>
               </div>
-            </div>
-            <div className="mt-4 text-xs text-scout-muted">
-              scout will start watching this product. first datapoint already saved. you'll see history within 4 hours.
-            </div>
+            ) : null}
           </div>
         )}
 
-        {stage === 'loading' && (
-          <div className="mt-6 p-5 bg-scout-bg rounded-scout-lg border border-scout-subtle">
-            <div className="flex items-center gap-2 text-[11px] text-scout-muted uppercase tracking-[0.1em]">
-              <span className="w-1.5 h-1.5 rounded-full bg-scout-accent animate-pulse" />
-              parsing…
-            </div>
+        {!active && (
+          <div className="mt-5 text-center text-xs text-scout-dim">
+            введи хотя бы 2 символа, чтобы начать поиск.
           </div>
         )}
-
-        <div className="mt-8 flex gap-3 justify-end">
-          <button onClick={onClose} className="scout-btn-ghost h-10 px-5 text-[13px]">
-            cancel
-          </button>
-          <button
-            onClick={() => onSubmit?.(url)}
-            disabled={!url}
-            className="scout-btn-primary h-10 px-6 text-[13px] disabled:opacity-50 disabled:pointer-events-none"
-          >
-            add product
-          </button>
-        </div>
       </div>
     </div>
   )

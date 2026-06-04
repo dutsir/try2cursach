@@ -1,5 +1,5 @@
 export { Scout } from './Scout'
-export { ScoutLayout } from './ScoutLayout'
+export { ScoutLayout, useScoutLayout } from './ScoutLayout'
 export { Sparkline } from './Sparkline'
 export { MarketplaceTag } from './MarketplaceTag'
 export type { MarketplaceSource } from './MarketplaceTag'

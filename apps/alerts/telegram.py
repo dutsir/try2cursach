@@ -77,11 +77,61 @@ def _extract_code(text: str) -> str | None:
     parts = text.strip().split()
     if not parts:
         return None
-    if parts[0].lower() in ('/start', 'start') and len(parts) >= 2:
+    if _command(parts[0]) in ('/start', 'start') and len(parts) >= 2:
         return parts[1].strip().upper()
     if len(parts) == 1 and parts[0].startswith('/'):
         return None
     return parts[0].strip().upper()
+
+
+def _command(token: str) -> str:
+    """Нормализует команду: `/Start@my_bot` -> `/start` (Telegram добавляет @bot
+    к командам в группах и иногда сохраняет регистр)."""
+    return token.split('@', 1)[0].lower()
+
+
+def _is_start_command(text: str) -> bool:
+    parts = (text or '').strip().split()
+    return bool(parts) and _command(parts[0]) in ('/start', 'start')
+
+
+def _send_greeting(chat_id: str, first_name: str, had_code: bool) -> None:
+    """Отвечает на `/start` без рабочего кода привязки.
+
+    Три случая: чат уже привязан → подтверждаем; был код, но не подошёл →
+    просим новый; иначе приветствуем и объясняем, как подключиться.
+    """
+    from apps.core.models import User
+
+    name = (first_name or '').strip()
+    hi = f'Приветик, {name}!' if name else 'Приветик!'
+
+    linked_user = User.objects.filter(telegram_chat_id=str(chat_id)).first()
+    if linked_user:
+        send_message(
+            chat_id,
+            f'{hi} Вы уже подключены как «{linked_user.username}» — '
+            'уведомления о ценах приходят сюда. Менять ничего не нужно.',
+        )
+        return
+
+    if had_code:
+        send_message(
+            chat_id,
+            'Хм, такой код не найден или уже истёк. Сгенерируйте новый на сайте '
+            'в разделе «Настройки → Уведомления» и пришлите его мне.',
+        )
+        return
+
+    send_message(
+        chat_id,
+        f'{hi} Я бот scout — слежу за ценами на маркетплейсах за вас.\n\n'
+        'Чтобы уведомления о снижении цен и аномалиях приходили сюда, '
+        'привяжите аккаунт:\n'
+        '1. На сайте откройте «Настройки → Уведомления».\n'
+        '2. Нажмите «Подключить Telegram» и пришлите мне код.\n\n'
+        'После привязки я начну дублировать сюда все важные оповещения.',
+    )
 
 
 def _link_user_by_code(code: str, chat_id: str, username: str) -> bool:
@@ -144,19 +194,32 @@ def poll_updates() -> dict:
 
     updates = data.get('result', [])
     linked = 0
+    greeted = 0
     max_update_id = None
     for upd in updates:
         max_update_id = upd['update_id']
         message = upd.get('message') or {}
         chat = message.get('chat') or {}
         chat_id = chat.get('id')
+        if not chat_id:
+            continue
         username = chat.get('username') or ''
-        code = _extract_code(message.get('text', ''))
-        if chat_id and code and _link_user_by_code(code, chat_id, username):
+        first_name = chat.get('first_name') or ''
+        text = message.get('text', '') or ''
+        code = _extract_code(text)
+
+        if code and _link_user_by_code(code, chat_id, username):
             linked += 1
+            continue
+
+        # Голый `/start` (или `/start` с неподошедшим кодом) — приветствуем
+        # и подсказываем, как привязать аккаунт.
+        if _is_start_command(text):
+            _send_greeting(chat_id, first_name, had_code=bool(code))
+            greeted += 1
 
     if max_update_id is not None:
         # offset = последний обработанный update_id + 1
         cache.set(_OFFSET_CACHE_KEY, max_update_id + 1, timeout=None)
 
-    return {'ok': True, 'updates': len(updates), 'linked': linked}
+    return {'ok': True, 'updates': len(updates), 'linked': linked, 'greeted': greeted}

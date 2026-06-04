@@ -61,13 +61,19 @@ def _best_offer_summary(product: Product) -> dict | None:
     offers = [o for o in product.offers.all() if o.current_price is not None]
     if offers:
         best = min(offers, key=lambda o: o.current_price)
+        # Дешёвый оффер мог прийти из источника без картинки (часто после
+        # кросс-сорс дедупликации) — тогда фолбэкаем на фото любого соседнего
+        # оффера того же товара, иначе карточка остаётся без изображения.
+        image_url = best.image_url or product.image_url or ''
+        if not image_url:
+            image_url = next((o.image_url for o in product.offers.all() if o.image_url), '')
         return {
             'price': str(best.current_price),
             'old_price': str(best.current_old_price) if best.current_old_price else None,
             'source': best.source,
             'source_display': best.get_source_display(),
             'url': best.url,
-            'image_url': best.image_url or product.image_url or '',
+            'image_url': image_url,
             'offers_count': len(product.offers.all()),
         }
 
@@ -93,16 +99,26 @@ def _best_offer_summary(product: Product) -> dict | None:
 class ProductListSerializer(serializers.ModelSerializer):
     category = CategorySerializer(read_only=True)
     best_offer = serializers.SerializerMethodField()
+    is_price_min = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
         fields = (
             'id', 'name', 'slug', 'brand', 'category', 'vendor_code',
-            'image_url', 'is_active', 'last_parsed_at', 'best_offer',
+            'image_url', 'is_active', 'last_parsed_at', 'best_offer', 'is_price_min',
         )
 
     def get_best_offer(self, obj: Product) -> dict | None:
         return _best_offer_summary(obj)
+
+    def get_is_price_min(self, obj: Product) -> bool | None:
+        # Заполняется только когда queryset аннотирован (фильтр at_historical_min);
+        # в обычном каталоге аннотаций нет → None (фронт бейдж не рисует).
+        hist = getattr(obj, 'hist_min', None)
+        cur = getattr(obj, 'cur_min', None)
+        if hist is None or cur is None:
+            return None
+        return cur <= hist
 
 
 class ProductDetailSerializer(ProductListSerializer):

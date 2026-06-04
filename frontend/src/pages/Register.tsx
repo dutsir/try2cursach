@@ -135,7 +135,7 @@ export default function Register({ onRegister }: RegisterProps) {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="scout-caption mb-2 block">имя</label>
                 <Input

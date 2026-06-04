@@ -76,6 +76,8 @@ export default {
       animation: {
         'fade-in': 'fadeIn 0.15s linear',
         'scout-rise': 'scoutRise 600ms cubic-bezier(0.16, 1, 0.3, 1) both',
+        'scout-fade': 'fadeIn 200ms ease-out both',
+        'scout-slide-in': 'scoutSlideIn 240ms cubic-bezier(0.16, 1, 0.3, 1) both',
       },
       keyframes: {
         fadeIn: {
@@ -85,6 +87,10 @@ export default {
         scoutRise: {
           '0%': { opacity: '0', transform: 'translateY(24px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        scoutSlideIn: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(0)' },
         },
       },
     },

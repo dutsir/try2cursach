@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/Input'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { Modal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
-import { cn, formatPrice, formatRelativeDate } from '@/lib/utils'
+import { cn, formatPrice, formatRelativeDate, getOfferPrice } from '@/lib/utils'
 import { useDebounce } from '@/hooks/useDebounce'
 
 interface ProductSearchResult {
@@ -228,9 +228,10 @@ export default function WishlistPage() {
                       'text-sm font-bold',
                       available ? 'text-scout-success' : 'text-scout-dim',
                     )}>
-                      {item.product.best_offer && item.product.best_offer.price
-                        ? formatPrice(item.product.best_offer.price * item.quantity)
-                        : '—'}
+                      {(() => {
+                        const p = getOfferPrice(item.product.best_offer)
+                        return p !== null ? formatPrice(p * item.quantity) : '—'
+                      })()}
                     </p>
                   </div>
 

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { PageSpinner } from '@/components/ui/Spinner'
 import { subscriptionsApi } from '@/api/subscriptions'
 import { useToast } from '@/components/ui/Toast'
-import { formatPrice } from '@/lib/utils'
+import { formatPrice, getOfferPrice } from '@/lib/utils'
 import type { Subscription } from '@/types'
 
 type Filter = 'all' | 'reached' | 'active' | 'paused'
@@ -57,7 +57,7 @@ export default function Subscriptions() {
   const subs = data?.results ?? []
 
   const isReached = (s: Subscription) => {
-    const cur = s.product.best_offer?.price ?? null
+    const cur = getOfferPrice(s.product.best_offer)
     return cur !== null && cur <= s.target_price
   }
 

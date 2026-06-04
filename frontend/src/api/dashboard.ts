@@ -10,6 +10,8 @@ export interface DashboardDeal {
   price: string
   old_price: string
   discount_pct: number
+  is_min_30d?: boolean
+  is_price_min?: boolean
   source: string
   source_display: string
   url: string
@@ -27,6 +29,7 @@ export interface DashboardResponse {
     products: number
     categories: number
     offers: number
+    price_records: number
     price_records_24h: number
   }
   top_deals: DashboardDeal[]

@@ -13,6 +13,8 @@ export interface ProductsParams {
   min_price?: number
   max_price?: number
   in_stock?: boolean
+  has_discount?: boolean
+  at_historical_min?: boolean
 }
 
 export interface Category {

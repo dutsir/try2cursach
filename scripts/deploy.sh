@@ -13,6 +13,9 @@ PROJECT_DIR="${PROJECT_DIR:-/opt/price_monitor}"
 DEPLOY_MODE="${DEPLOY_MODE:-site}"
 cd "$PROJECT_DIR"
 
+# VPS: web-light + HTTPS nginx (см. docker-compose.vps.yml).
+COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.vps.yml)
+
 # Создаём внешний Docker volume для БД, если его ещё нет.
 # (docker compose down -v НЕ удаляет external-volumes — данные в безопасности)
 if ! docker volume inspect pm_postgres_data &>/dev/null; then
@@ -25,25 +28,25 @@ git pull --ff-only
 
 if [[ "$DEPLOY_MODE" == "site+wb" ]]; then
     echo "[$(date)] Rebuilding containers (web + frontend + celery-light)…"
-    docker compose build web frontend celery-worker-vps celery-beat
+    "${COMPOSE[@]}" build web frontend celery-worker-vps celery-beat
 else
     echo "[$(date)] Rebuilding containers (web + frontend only)…"
-    docker compose build web frontend
+    "${COMPOSE[@]}" build web frontend
 fi
 
 echo "[$(date)] Restarting services…"
 if [[ "$DEPLOY_MODE" == "site+wb" ]]; then
     # up -d поднимает сервисы без profile (postgres, redis, rabbitmq, web, frontend)
     # + profile vps-celery (celery-worker-vps + celery-beat).
-    docker compose --profile vps-celery up -d
+    "${COMPOSE[@]}" --profile vps-celery up -d
 else
     # Только базовые сервисы без Celery.
-    docker compose up -d
+    "${COMPOSE[@]}" up -d
 fi
 
 echo "[$(date)] Waiting for web to be ready…"
 for i in $(seq 1 15); do
-    if docker compose exec -T web python manage.py check --deploy --fail-level ERROR 2>/dev/null; then
+    if "${COMPOSE[@]}" exec -T web python manage.py check --deploy --fail-level ERROR 2>/dev/null; then
         break
     fi
     echo "  [${i}/15] waiting…"
@@ -51,4 +54,4 @@ for i in $(seq 1 15); do
 done
 
 echo "[$(date)] Deploy complete."
-docker compose ps
+"${COMPOSE[@]}" ps

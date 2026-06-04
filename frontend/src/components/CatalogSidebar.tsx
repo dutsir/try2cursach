@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { facetsApi } from '@/api/facets'
+import { categoriesApi } from '@/api/products'
 import { useCatalogFilters } from '@/hooks/useCatalogFilters'
 import { BrandMultiSelect } from './BrandMultiSelect'
 import { PriceRangeSlider } from './PriceRangeSlider'
@@ -13,8 +14,27 @@ const SOURCE_LABELS: Record<string, string> = {
   wb:       'Wildberries',
 }
 
+const ORDERINGS = [
+  { value: '',            label: 'По умолчанию' },
+  { value: 'min_price',   label: 'Дешевле сначала' },
+  { value: '-min_price',  label: 'Дороже сначала' },
+  { value: 'name',        label: 'Название А–Я' },
+  { value: '-name',       label: 'Название Я–А' },
+  { value: '-created_at', label: 'Новинки' },
+]
+
+const SELECT_CLS =
+  'w-full rounded-scout border border-scout-subtle bg-scout-elevated px-3 py-2 text-sm text-scout-text focus:border-scout-accent/60 focus:outline-none'
+
 export function CatalogSidebar() {
   const f = useCatalogFilters()
+
+  const { data: categoryTree } = useQuery({
+    queryKey: ['categories-tree'],
+    queryFn: categoriesApi.tree,
+    staleTime: 300_000,
+  })
+  const roots = categoryTree ?? []
 
   const { data: facets, isLoading: facetsLoading } = useQuery({
     queryKey: ['facets', f.category],
@@ -38,6 +58,45 @@ export function CatalogSidebar() {
         )}
       </div>
 
+      <section>
+        <h4 className="mb-2.5 scout-caption">Категория</h4>
+        <select
+          value={f.category}
+          onChange={e => f.setCategory(e.target.value)}
+          className={SELECT_CLS}
+        >
+          {roots.map(root => (
+            root.children.length > 0 ? (
+              <optgroup key={root.slug} label={`${root.name} (${root.product_count})`}>
+                <option value={root.slug}>Все · {root.name}</option>
+                {root.children.map(child => (
+                  <option key={child.slug} value={child.slug}>
+                    {child.name} ({child.product_count})
+                  </option>
+                ))}
+              </optgroup>
+            ) : (
+              <option key={root.slug} value={root.slug}>
+                {root.name} ({root.product_count})
+              </option>
+            )
+          ))}
+        </select>
+      </section>
+
+      <section>
+        <h4 className="mb-2.5 scout-caption">Сортировка</h4>
+        <select
+          value={f.ordering}
+          onChange={e => f.setFilter('ordering', e.target.value)}
+          className={SELECT_CLS}
+        >
+          {ORDERINGS.map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </section>
+
       {f.category && (
         <section>
           <h4 className="mb-2.5 scout-caption">
@@ -56,6 +115,34 @@ export function CatalogSidebar() {
           )}
         </section>
       )}
+
+      {f.category && facets?.specs?.map(group => (
+        <section key={group.key}>
+          <h4 className="mb-2.5 scout-caption">{group.label}</h4>
+          <div className="flex flex-wrap gap-1.5">
+            {group.values.map(({ value, count }) => {
+              const token = `${group.key}:${value}`
+              const active = f.specs.includes(token)
+              return (
+                <button
+                  key={token}
+                  onClick={() => f.toggleArrayValue('specs', token)}
+                  title={`${count}`}
+                  className={
+                    'rounded-scout border px-2.5 py-1 text-xs capitalize transition-colors ' +
+                    (active
+                      ? 'border-scout-accent/60 bg-scout-accent/10 text-scout-accent'
+                      : 'border-scout-subtle bg-scout-elevated text-scout-text hover:border-scout-border')
+                  }
+                >
+                  {value}
+                  <span className="ml-1.5 text-[10px] text-scout-dim scout-tabnums">{count}</span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      ))}
 
       {f.category && facets?.price_range && facets.price_range.max > facets.price_range.min && (
         <section>

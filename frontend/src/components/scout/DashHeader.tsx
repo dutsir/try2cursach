@@ -1,6 +1,6 @@
 import { LayoutGrid, List } from 'lucide-react'
 
-export type DashFilter = 'all' | 'buy' | 'wait' | 'monitor'
+export type DashFilter = 'all' | 'discount' | 'min'
 export type DashView = 'grid' | 'list'
 
 interface DashHeaderProps {
@@ -11,14 +11,12 @@ interface DashHeaderProps {
   greeting?: string
   subtitle?: string
   dateLine?: string
-  counts: Record<DashFilter, number>
 }
 
 const TABS: { key: DashFilter; label: string; dotColor?: string }[] = [
-  { key: 'all',     label: 'Все' },
-  { key: 'buy',     label: 'Можно купить', dotColor: '#10B981' },
-  { key: 'wait',    label: 'Подождать',    dotColor: '#EF4444' },
-  { key: 'monitor', label: 'Мониторим',    dotColor: '#F59E0B' },
+  { key: 'all',      label: 'Все' },
+  { key: 'discount', label: 'Со скидкой',          dotColor: '#10B981' },
+  { key: 'min',      label: 'Исторический минимум', dotColor: '#A855F7' },
 ]
 
 export function DashHeader({
@@ -29,7 +27,6 @@ export function DashHeader({
   greeting = 'добрый день.',
   subtitle = 'статус загрузки.',
   dateLine,
-  counts,
 }: DashHeaderProps) {
   const today = dateLine ?? formatToday()
 
@@ -43,13 +40,13 @@ export function DashHeader({
         <p className="mt-2 text-sm text-scout-muted">{subtitle}</p>
       </div>
 
-      <div className="flex items-center gap-2">
-        <div className="flex gap-0.5 bg-scout-elevated p-0.5 rounded-scout border border-scout-subtle">
+      <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto sm:overflow-visible">
+        <div className="flex gap-0.5 bg-scout-elevated p-0.5 rounded-scout border border-scout-subtle shrink-0">
           {TABS.map(t => (
             <button
               key={t.key}
               onClick={() => setFilter(t.key)}
-              className={`px-3 py-2 rounded-[3px] text-xs font-medium flex gap-1.5 items-center transition-colors ${
+              className={`px-3 py-2 rounded-[3px] text-xs font-medium flex gap-1.5 items-center whitespace-nowrap transition-colors ${
                 filter === t.key
                   ? 'bg-scout-subtle text-scout-text'
                   : 'bg-transparent text-scout-muted hover:text-scout-text'
@@ -59,12 +56,11 @@ export function DashHeader({
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: t.dotColor }} />
               )}
               {t.label}
-              <span className="text-scout-dim scout-tabnums">{counts[t.key]}</span>
             </button>
           ))}
         </div>
 
-        <div className="flex gap-0.5 bg-scout-elevated p-0.5 rounded-scout border border-scout-subtle">
+        <div className="flex gap-0.5 bg-scout-elevated p-0.5 rounded-scout border border-scout-subtle shrink-0">
           <button
             onClick={() => setView('grid')}
             className={`w-[30px] h-[30px] rounded-[3px] flex items-center justify-center transition-colors ${

@@ -22,14 +22,14 @@ function StatTile({ label, value, sub, color = '#F5F5F5' }: StatTileProps) {
 
 interface DashStatsProps {
   tracked: number
-  offersCount?: number
+  priceRecords?: number
 }
 
-export function DashStats({ tracked, offersCount = 0 }: DashStatsProps) {
+export function DashStats({ tracked, priceRecords = 0 }: DashStatsProps) {
   return (
-    <div className="grid grid-cols-2 gap-4 mb-8">
+    <div className="grid grid-cols-2 gap-4">
       <StatTile label="Товаров в каталоге" value={tracked.toLocaleString('ru-RU')} sub="всего в базе" />
-      <StatTile label="Офферов" value={offersCount.toLocaleString('ru-RU')} sub="из всех источников" />
+      <StatTile label="Записей цен" value={priceRecords.toLocaleString('ru-RU')} sub="из всех источников" />
     </div>
   )
 }

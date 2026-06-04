@@ -2,11 +2,13 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import {
-  Cpu, CircuitBoard, Monitor, MemoryStick, Plug, Box, HardDrive, X,
+  Cpu, CircuitBoard, Monitor, MemoryStick, Plug, Box, HardDrive, X, Wand2, Loader2,
 } from 'lucide-react'
 import { useBuildStore, type SlotKey } from '@/store/build'
 import { BuilderSlotPicker } from '@/components/BuilderSlotPicker'
+import { productsApi } from '@/api/products'
 import { formatPrice } from '@/lib/utils'
+import type { Product } from '@/types'
 
 interface SlotConfig {
   key: SlotKey
@@ -14,6 +16,24 @@ interface SlotConfig {
   categorySlug: string
   icon: LucideIcon
   optional?: boolean
+}
+
+/**
+ * «Идеальный» вариант для слота: в наличии + с фото важнее всего, а среди таких —
+ * товар с ценой ближе всего к медиане категории (не дно и не топ). Если товаров
+ * с фото нет — берём ближайший к медиане из всех, чтобы слот всё равно заполнился.
+ */
+function pickIdeal(products: Product[]): Product | null {
+  const priced = products.filter(p => p.best_offer && Number(p.best_offer.price) > 0)
+  if (!priced.length) return null
+  const withPhoto = priced.filter(p => !!p.best_offer!.image_url)
+  const pool = withPhoto.length ? withPhoto : priced
+  const prices = pool.map(p => Number(p.best_offer!.price)).sort((a, b) => a - b)
+  const median = prices[Math.floor(prices.length / 2)]
+  return pool.reduce((best, p) =>
+    Math.abs(Number(p.best_offer!.price) - median) < Math.abs(Number(best.best_offer!.price) - median)
+      ? p : best,
+  )
 }
 
 const PC_SLOTS: SlotConfig[] = [
@@ -36,7 +56,43 @@ export default function Builder() {
   const filled = useBuildStore(s => s.filledCount())
 
   const [picking, setPicking] = useState<SlotConfig | null>(null)
+  const [building, setBuilding] = useState(false)
   const progressPct = (filled / PC_SLOTS.length) * 100
+
+  // Заполняем только пустые обязательные слоты — ручной выбор не перетираем.
+  const emptyRequired = PC_SLOTS.filter(s => !s.optional && !slots[s.key])
+
+  const autoBuild = async () => {
+    if (building || !emptyRequired.length) return
+    setBuilding(true)
+    try {
+      await Promise.all(emptyRequired.map(async (slot) => {
+        try {
+          const res = await productsApi.list({
+            category_slug: slot.categorySlug,
+            in_stock: true,
+            ordering: 'min_price',
+            page: 1,
+            page_size: 100,
+          })
+          const pick = pickIdeal(res.results)
+          if (!pick) return
+          const offer = pick.best_offer
+          setSlot(slot.key, {
+            productId: pick.id,
+            name: pick.name,
+            brand: pick.brand || '',
+            imageUrl: offer?.image_url || '',
+            price: Number(offer?.price || 0),
+          })
+        } catch {
+          // слот, который не удалось подобрать, просто пропускаем
+        }
+      }))
+    } finally {
+      setBuilding(false)
+    }
+  }
 
   return (
     <div className="animate-scout-rise space-y-6 pb-24">
@@ -50,14 +106,25 @@ export default function Builder() {
             выбирай компоненты — мы посчитаем суммарную цену в реальном времени. сборка сохраняется автоматически в браузере.
           </p>
         </div>
-        {filled > 0 && (
+        <div className="flex items-center gap-4">
           <button
-            onClick={clearAll}
-            className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.1em] text-scout-dim hover:text-scout-danger transition-colors"
+            onClick={autoBuild}
+            disabled={building || emptyRequired.length === 0}
+            title={emptyRequired.length === 0 ? 'Все обязательные слоты заполнены' : 'Подобрать сбалансированные варианты в пустые слоты'}
+            className="flex items-center gap-1.5 rounded-scout bg-scout-accent/10 border border-scout-accent/30 px-3 py-1.5 text-[11px] uppercase tracking-[0.1em] text-scout-accent hover:bg-scout-accent/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            <X size={12} /> очистить сборку
+            {building ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+            {building ? 'подбираем…' : 'собрать за меня'}
           </button>
-        )}
+          {filled > 0 && (
+            <button
+              onClick={clearAll}
+              className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.1em] text-scout-dim hover:text-scout-danger transition-colors"
+            >
+              <X size={12} /> очистить сборку
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Progress strip */}

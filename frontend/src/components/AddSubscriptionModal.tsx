@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
 import { productsApi } from '@/api/products'
 import { subscriptionsApi } from '@/api/subscriptions'
-import { formatPrice, SOURCE_LABELS } from '@/lib/utils'
+import { formatPrice, SOURCE_LABELS, getOfferPrice } from '@/lib/utils'
 import { useDebounce } from '@/hooks/useDebounce'
 import { useToast } from '@/components/ui/Toast'
 import type { Product } from '@/types'
@@ -22,11 +22,10 @@ interface Props {
 export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Product | null>(preselectedProduct ?? null)
-  const [targetPrice, setTargetPrice] = useState(() =>
-    preselectedProduct?.best_offer?.price
-      ? String(Math.round(preselectedProduct.best_offer.price * 0.9))
-      : ''
-  )
+  const [targetPrice, setTargetPrice] = useState(() => {
+    const p = getOfferPrice(preselectedProduct?.best_offer)
+    return p ? String(Math.round(p * 0.9)) : ''
+  })
   const debouncedQuery = useDebounce(query, 400)
   const qc = useQueryClient()
   const { toast } = useToast()
@@ -51,9 +50,8 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
     onError: () => toast('Ошибка при создании подписки', 'error'),
   })
 
-  const suggestedPrice = selected?.best_offer?.price
-    ? String(Math.round(selected.best_offer.price * 0.9))
-    : ''
+  const selectedPrice = getOfferPrice(selected?.best_offer)
+  const suggestedPrice = selectedPrice ? String(Math.round(selectedPrice * 0.9)) : ''
 
   return (
     <Modal open={open} onClose={onClose} title="Добавить подписку на цену">
@@ -94,7 +92,7 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
                       {product.best_offer && (
                         <div className="flex shrink-0 flex-col items-end gap-1">
                           <span className="text-sm font-semibold text-scout-text scout-tabnums">
-                            {formatPrice(product.best_offer.price)}
+                            {formatPrice(getOfferPrice(product.best_offer))}
                           </span>
                           <Badge variant="ghost">
                             {SOURCE_LABELS[product.best_offer.source]}
@@ -120,7 +118,7 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
             <span className="line-clamp-1 flex-1 text-sm text-scout-text">{selected.name}</span>
             {selected.best_offer && (
               <span className="shrink-0 text-sm text-scout-accent scout-tabnums">
-                {formatPrice(selected.best_offer.price)}
+                {formatPrice(selectedPrice)}
               </span>
             )}
           </div>
@@ -134,10 +132,10 @@ export function AddSubscriptionModal({ open, onClose, preselectedProduct }: Prop
             value={targetPrice}
             onChange={e => setTargetPrice(e.target.value)}
           />
-          {selected?.best_offer && selected.best_offer.price && targetPrice && (
+          {selectedPrice && targetPrice && (
             <p className="text-xs text-scout-dim">
-              Текущая цена: {formatPrice(selected.best_offer.price)} —{' '}
-              скидка {Math.round((1 - parseFloat(targetPrice) / selected.best_offer.price) * 100)}%
+              Текущая цена: {formatPrice(selectedPrice)} —{' '}
+              скидка {Math.round((1 - parseFloat(targetPrice) / selectedPrice) * 100)}%
             </p>
           )}
         </div>

@@ -25,6 +25,7 @@ interface DashSidebarProps {
   compareCount?: number
   subscriptionsCount?: number
   notificationsCount?: number
+  onNavigate?: () => void
 }
 
 export function DashSidebar({
@@ -33,6 +34,7 @@ export function DashSidebar({
   compareCount = 0,
   subscriptionsCount = 0,
   notificationsCount = 0,
+  onNavigate,
 }: DashSidebarProps) {
   const items: NavItem[] = [
     { to: '/',              label: 'Главная',     icon: Home,       count: productsCount, end: true },
@@ -54,6 +56,7 @@ export function DashSidebar({
             key={item.to}
             to={item.to}
             end={item.end}
+            onClick={onNavigate}
             className={({ isActive }) =>
               `group flex items-center gap-2.5 px-3 py-2 rounded-scout text-[13px] transition-colors ${
                 isActive

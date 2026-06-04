@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink, Package, Heart, BookmarkPlus } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { formatPrice, discount, SOURCE_LABELS } from '@/lib/utils'
+import { formatPrice, discount, getOfferPrice, getOfferOldPrice } from '@/lib/utils'
 import { wishlistApi } from '@/api/wishlist'
 import { CompareCheckbox } from './CompareCheckbox'
 import type { Product } from '@/types'
@@ -35,7 +35,9 @@ export function ProductCard({ product, onSubscribe, subscribed, wishlistItemId }
   })
 
   const offer = product.best_offer
-  const hasDiscount = offer?.old_price && offer.price && Number(offer.old_price) > Number(offer.price)
+  const price = getOfferPrice(offer)
+  const oldPrice = getOfferOldPrice(offer)
+  const hasDiscount = price !== null && oldPrice !== null && oldPrice > price
 
   return (
     <div className="group flex flex-col bg-scout-elevated border border-scout-subtle rounded-scout-lg overflow-hidden transition-all duration-200 hover:border-scout-border hover:-translate-y-0.5">
@@ -69,24 +71,21 @@ export function ProductCard({ product, onSubscribe, subscribed, wishlistItemId }
         <div className="mt-auto pt-3 border-t border-scout-subtle flex items-end justify-between gap-2">
           {offer ? (
             <div className="flex flex-col gap-1">
-              {offer.old_price && (
+              {oldPrice !== null && (
                 <span className="text-[11px] text-scout-dim line-through leading-none scout-tabnums">
-                  {formatPrice(offer.old_price)}
+                  {formatPrice(oldPrice)}
                 </span>
               )}
               <div className="flex items-baseline gap-2">
                 <span className="text-[16px] font-bold text-scout-accent leading-none scout-tabnums">
-                  {formatPrice(offer.price)}
+                  {formatPrice(price)}
                 </span>
                 {hasDiscount && (
                   <span className="text-[11px] font-bold text-scout-success scout-tabnums">
-                    -{discount(offer.price, offer.old_price)}%
+                    -{discount(price, oldPrice)}%
                   </span>
                 )}
               </div>
-              <span className="text-[10px] uppercase tracking-[0.08em] text-scout-muted">
-                {SOURCE_LABELS[offer.source] ?? offer.source}
-              </span>
             </div>
           ) : (
             <span className="text-xs text-scout-dim">Нет в наличии</span>
@@ -105,7 +104,10 @@ export function ProductCard({ product, onSubscribe, subscribed, wishlistItemId }
               </a>
             )}
 
-            <CompareCheckbox productId={product.id} />
+            <CompareCheckbox
+              productId={product.id}
+              category={{ id: product.category.id, name: product.category.name }}
+            />
 
             <button
               onClick={e => { e.preventDefault(); toggleWishlist.mutate({ remove: inWishlist, itemId: wishlistItemId }) }}

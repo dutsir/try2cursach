@@ -18,13 +18,14 @@ export interface CatalogFilters {
   category: string          // category_slug
   brands: string[]          // ['ASUS', 'MSI']
   sources: string[]         // ['dns', 'wb']
+  specs: string[]           // ['cpu_family:core i7', 'ram_gb:16']
   minPrice: number | null
   maxPrice: number | null
   inStock: boolean
   ordering: string          // '', 'name', '-name', 'min_price', '-min_price', '-created_at'
 }
 
-const ARRAY_KEYS = ['brands', 'sources'] as const
+const ARRAY_KEYS = ['brands', 'sources', 'specs'] as const
 type ArrayKey = (typeof ARRAY_KEYS)[number]
 
 function isArrayKey(k: string): k is ArrayKey {
@@ -39,6 +40,7 @@ export function useCatalogFilters() {
     category:  params.get('category') || '',
     brands:    (params.get('brands') || '').split(',').filter(Boolean),
     sources:   (params.get('sources') || '').split(',').filter(Boolean),
+    specs:     (params.get('spec') || '').split(',').filter(Boolean),
     minPrice:  params.get('min_price') ? Number(params.get('min_price')) : null,
     maxPrice:  params.get('max_price') ? Number(params.get('max_price')) : null,
     inStock:   params.get('in_stock') === 'true',
@@ -53,6 +55,7 @@ export function useCatalogFilters() {
       const urlKey = key === 'minPrice' ? 'min_price'
                    : key === 'maxPrice' ? 'max_price'
                    : key === 'inStock'  ? 'in_stock'
+                   : key === 'specs'    ? 'spec'
                    : key
       if (Array.isArray(value)) {
         if (value.length) next.set(urlKey, value.join(','))
@@ -69,6 +72,22 @@ export function useCatalogFilters() {
     }, { replace: false })
   }, [setParams])
 
+  // Смена категории сбрасывает категория-специфичные фасеты (бренды, цена):
+  // их значения валидны только в рамках одной категории. Иначе остаётся
+  // «бренд ASUS» из видеокарт, невидимо применённый в SSD → пустая выдача.
+  const setCategory = useCallback((slug: string, opts?: { replace?: boolean }) => {
+    setParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (slug) next.set('category', slug)
+      else next.delete('category')
+      next.delete('brands')
+      next.delete('spec')
+      next.delete('min_price')
+      next.delete('max_price')
+      return next
+    }, { replace: opts?.replace ?? false })
+  }, [setParams])
+
   const toggleArrayValue = useCallback((key: ArrayKey, value: string) => {
     const current = filters[key]
     const next = current.includes(value)
@@ -77,8 +96,15 @@ export function useCatalogFilters() {
     setFilter(key, next)
   }, [filters, setFilter])
 
+  // Категория обязательна (нет «всех категорий»), поэтому сброс сохраняет её,
+  // а чистит только опциональные фильтры.
   const resetAll = useCallback(() => {
-    setParams(new URLSearchParams(), { replace: false })
+    setParams(prev => {
+      const next = new URLSearchParams()
+      const cat = prev.get('category')
+      if (cat) next.set('category', cat)
+      return next
+    }, { replace: false })
   }, [setParams])
 
   // Преобразование в формат для productsApi.list()
@@ -87,6 +113,7 @@ export function useCatalogFilters() {
     ...(filters.category && { category_slug: filters.category }),
     ...(filters.brands.length && { brand: filters.brands.join(',') }),
     ...(filters.sources.length && { source: filters.sources.join(',') }),
+    ...(filters.specs.length && { spec: filters.specs.join(',') }),
     ...(filters.minPrice !== null && { min_price: filters.minPrice }),
     ...(filters.maxPrice !== null && { max_price: filters.maxPrice }),
     ...(filters.inStock && { in_stock: true }),
@@ -96,12 +123,16 @@ export function useCatalogFilters() {
   return {
     ...filters,
     setFilter,
+    setCategory,
     toggleArrayValue,
     resetAll,
     toApiParams,
+    // Категория обязательна и не считается «активным» опциональным фильтром —
+    // иначе «Сбросить» висело бы всегда.
     isAnyActive: !!(
-      filters.search || filters.category || filters.brands.length ||
-      filters.sources.length || filters.minPrice !== null ||
+      filters.search || filters.brands.length ||
+      filters.sources.length || filters.specs.length ||
+      filters.minPrice !== null ||
       filters.maxPrice !== null || filters.inStock
     ),
   }

@@ -16,3 +16,15 @@ services:
     command: >
       celery -A config beat --loglevel=info
       --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+  # На VPS добавляем HTTPS: монтируем nginx.conf и сертификаты с хоста
+  # (можно менять конфиг без пересборки образа), пробрасываем 443.
+  # `ports` в compose конкатенируются между файлами → базовый 80 остаётся,
+  # сюда добавляем только 443.
+  frontend:
+    ports:
+      - "0.0.0.0:443:443"
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro

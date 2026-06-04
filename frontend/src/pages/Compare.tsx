@@ -5,7 +5,9 @@ import {
   X, Package, ExternalLink, ArrowLeft,
   TrendingDown, TrendingUp, Star, Sparkles, AlertCircle,
 } from 'lucide-react'
+import { parseApiError } from '@/api/client'
 import { compareApi } from '@/api/compare'
+import { QueryError } from '@/components/ui/QueryError'
 import { useCompareStore } from '@/store/compare'
 import { formatPrice, cn } from '@/lib/utils'
 import { Spinner } from '@/components/ui/Spinner'
@@ -47,7 +49,7 @@ export default function Compare() {
   const [aiCached, setAiCached] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['compare', ids],
     queryFn: () => compareApi.get(ids),
     enabled: ids.length > 0,
@@ -74,9 +76,8 @@ export default function Compare() {
       setAiCached(res.cached)
       setAiError(null)
     },
-    onError: (err: any) => {
-      const msg = err?.response?.data?.error || err?.message || 'Не удалось получить вердикт'
-      setAiError(msg)
+    onError: (err: unknown) => {
+      setAiError(parseApiError(err, 'Не удалось получить вердикт'))
       setAiVerdict(null)
     },
   })
@@ -101,6 +102,15 @@ export default function Compare() {
 
   if (isLoading) {
     return <div className="flex justify-center py-20"><Spinner /></div>
+  }
+
+  if (isError) {
+    return (
+      <QueryError
+        message={parseApiError(error, 'Не удалось загрузить сравнение')}
+        onRetry={() => refetch()}
+      />
+    )
   }
 
   const items = data || []

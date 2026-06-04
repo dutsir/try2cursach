@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { PriceChart } from '@/components/PriceChart'
-import { formatPrice, SOURCE_LABELS, SOURCE_COLORS } from '@/lib/utils'
+import { formatPrice, SOURCE_LABELS, SOURCE_COLORS, getOfferPrice } from '@/lib/utils'
 import type { Subscription } from '@/types'
 
 interface SubscriptionCardProps {
@@ -27,7 +27,7 @@ export function SubscriptionCard({ sub, index = 0, onDelete, onUpdate, deleting,
   const [editing, setEditing] = useState(false)
   const [priceInput, setPriceInput] = useState(String(sub.target_price))
   const offer = sub.product.best_offer
-  const currentPrice = offer?.price ?? null
+  const currentPrice = getOfferPrice(offer)
   const paused = sub.is_active === false
   const diff = currentPrice !== null ? currentPrice - sub.target_price : null
   const reached = diff !== null && diff <= 0

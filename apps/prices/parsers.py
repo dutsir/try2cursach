@@ -210,6 +210,33 @@ return (function () {
     if (t.indexOf('снят с производства') !== -1) return false;
     return true;
   }
+  // DNS лениво грузит картинки: реальный URL может лежать не в src (там бывает
+  // прозрачный плейсхолдер/спиннер), а в srcset / data-src / <picture><source>.
+  // Собираем все кандидаты и берём первый «настоящий» http(s)-URL.
+  function bestImg(img) {
+    if (!img) return '';
+    function ok(u) {
+      if (!u) return false;
+      if (u.slice(0, 5) === 'data:') return false;
+      if (!/^https?:\/\//.test(u)) return false;
+      if (/blank|placeholder|no-?image|spacer|loader/i.test(u)) return false;
+      return true;
+    }
+    var c = [img.currentSrc, img.getAttribute('src'), img.getAttribute('data-src'),
+             img.getAttribute('data-original'), img.getAttribute('data-lazy'),
+             img.getAttribute('data-lazy-src')];
+    var ss = img.getAttribute('srcset') || img.getAttribute('data-srcset');
+    if (ss) { ss.split(',').forEach(function (s) { c.push(s.trim().split(/\s+/)[0]); }); }
+    var pic = img.closest ? img.closest('picture') : null;
+    if (pic) {
+      Array.prototype.forEach.call(pic.querySelectorAll('source'), function (so) {
+        var x = so.getAttribute('srcset') || so.getAttribute('data-srcset');
+        if (x) { c.push(x.split(',')[0].trim().split(/\s+/)[0]); }
+      });
+    }
+    for (var i = 0; i < c.length; i++) { if (ok(c[i])) return c[i]; }
+    return '';
+  }
   function extractFromCard(card) {
     var nameEl = card.querySelector('a.catalog-product__name')
       || card.querySelector('a[data-role="product-link"]')
@@ -256,11 +283,7 @@ return (function () {
       }
     }
 
-    var imageUrl = '';
-    var img = card.querySelector('.catalog-product__image img');
-    if (img) {
-      imageUrl = img.getAttribute('src') || img.getAttribute('data-src') || '';
-    }
+    var imageUrl = bestImg(card.querySelector('.catalog-product__image img'));
 
     var vendorCode = '';
     var codeEl = card.getElementsByClassName('catalog-product__code')[0];
@@ -288,6 +311,36 @@ return (function () {
   }
   return out;
 })();
+"""
+
+
+# Тот же алгоритм, что bestImg() в каталожном JS, но для одиночного <img>,
+# переданного из Selenium (arguments[0]). Используется на детальной странице
+# товара и в карточках, которые парсятся через WebElement.
+_DNS_BEST_IMG_JS = r"""
+var img = arguments[0];
+if (!img) return '';
+function ok(u) {
+  if (!u) return false;
+  if (u.slice(0, 5) === 'data:') return false;
+  if (!/^https?:\/\//.test(u)) return false;
+  if (/blank|placeholder|no-?image|spacer|loader/i.test(u)) return false;
+  return true;
+}
+var c = [img.currentSrc, img.getAttribute('src'), img.getAttribute('data-src'),
+         img.getAttribute('data-original'), img.getAttribute('data-lazy'),
+         img.getAttribute('data-lazy-src')];
+var ss = img.getAttribute('srcset') || img.getAttribute('data-srcset');
+if (ss) { ss.split(',').forEach(function (s) { c.push(s.trim().split(/\s+/)[0]); }); }
+var pic = img.closest ? img.closest('picture') : null;
+if (pic) {
+  Array.prototype.forEach.call(pic.querySelectorAll('source'), function (so) {
+    var x = so.getAttribute('srcset') || so.getAttribute('data-srcset');
+    if (x) { c.push(x.split(',')[0].trim().split(/\s+/)[0]); }
+  });
+}
+for (var i = 0; i < c.length; i++) { if (ok(c[i])) return c[i]; }
+return '';
 """
 
 
@@ -1344,12 +1397,16 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         except Exception:
             pass
 
-        image_url = ''
-        try:
-            img = driver.find_element(self._by.CSS_SELECTOR, '.product-images-slider__main-img img')
-            image_url = img.get_attribute('src') or ''
-        except Exception:
-            pass
+        image_url = self._best_img_url(
+            driver,
+            driver,
+            (
+                '.product-images-slider__main-img img',
+                '.product-images-slider img',
+                '.product-card-top__image img',
+                'img[itemprop="image"]',
+            ),
+        )
 
         return ParsedProduct(
             name=name,
@@ -1396,12 +1453,15 @@ class DNSParser(ChromeDriverMixin, BaseParser):
             if old_price is not None:
                 break
 
-        image_url = ''
-        try:
-            img = el.find_element(self._by.CSS_SELECTOR, '.catalog-product__image img')
-            image_url = img.get_attribute('src') or img.get_attribute('data-src') or ''
-        except Exception:
-            pass
+        image_url = self._best_img_url(
+            getattr(el, 'parent', None) or el,
+            el,
+            (
+                '.catalog-product__image img',
+                '.catalog-product__image-link img',
+                'img',
+            ),
+        )
 
         vendor_code = ''
         try:
@@ -1438,6 +1498,25 @@ class DNSParser(ChromeDriverMixin, BaseParser):
             except Exception:
                 continue
         return None
+
+    def _best_img_url(self, driver: Any, root: Any, selectors: tuple[str, ...]) -> str:
+        """Достаёт «настоящий» URL картинки из первого подходящего <img>.
+
+        DNS лениво грузит картинки, поэтому src часто плейсхолдер — реальный URL
+        ищем в srcset/data-src/<picture><source> через _DNS_BEST_IMG_JS.
+        """
+        for sel in selectors:
+            try:
+                img = root.find_element(self._by.CSS_SELECTOR, sel)
+            except Exception:
+                continue
+            try:
+                url = driver.execute_script(_DNS_BEST_IMG_JS, img)
+            except Exception:
+                url = ''
+            if url:
+                return url
+        return ''
 
     def _extract_price_class(self, parent: Any, class_name: str) -> int | None:
         try:

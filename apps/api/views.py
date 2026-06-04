@@ -1,9 +1,11 @@
 import logging
+from collections import Counter
+from decimal import Decimal
 
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import (
     Count, DecimalField, Exists, ExpressionWrapper, F,
-    Max, Min, OuterRef, Q, Value,
+    Max, Min, OuterRef, Q, Subquery, Value,
 )
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django_filters import (
@@ -39,13 +41,29 @@ from .serializers import (
 )
 
 
+# Структурированные характеристики (specs_fingerprint), которые показываем
+# чипами в сайдбаре и по которым фильтруем. key → человекочитаемый label.
+SPEC_FACET_DEFS: list[tuple[str, str]] = [
+    ('cpu_family', 'Процессор'),
+    ('gpu_family', 'Графический чип'),
+    ('ram_gb', 'Объём памяти, ГБ'),
+    ('storage_gb', 'Накопитель, ГБ'),
+]
+FACETABLE_SPEC_KEYS = {k for k, _ in SPEC_FACET_DEFS}
+# Эти ключи в specs_fingerprint хранятся числом — при фильтрации пробуем и int.
+NUMERIC_SPEC_KEYS = {'ram_gb', 'storage_gb', 'screen_in', 'year'}
+
+
 class ProductFilterSet(FilterSet):
     source = CharFilter(method='filter_source')
     category_slug = CharFilter(method='filter_category_slug')
     brand = CharFilter(method='filter_brand')
+    spec = CharFilter(method='filter_spec')
     min_price = NumberFilter(method='filter_min_price')
     max_price = NumberFilter(method='filter_max_price')
     in_stock = BooleanFilter(method='filter_in_stock')
+    has_discount = BooleanFilter(method='filter_has_discount')
+    at_historical_min = BooleanFilter(method='filter_at_historical_min')
 
     def filter_category_slug(self, queryset, name, value):
         try:
@@ -72,6 +90,36 @@ class ProductFilterSet(FilterSet):
             q |= Q(brand__iexact=b)
         return queryset.filter(q)
 
+    def filter_spec(self, queryset, name, value):
+        """Фильтр по структурированным характеристикам specs_fingerprint.
+
+        Формат: ?spec=cpu_family:core i7,cpu_family:core i9,ram_gb:16
+        Внутри одного ключа значения объединяются по ИЛИ, между ключами — И.
+        Значения берутся из фасетов (уже в нужном регистре), числовые ключи
+        (ram_gb и т. п.) пробуем сопоставить и как строку, и как int — в
+        specs_fingerprint они лежат числом.
+        """
+        by_key: dict[str, list[str]] = {}
+        for token in (value or '').split(','):
+            token = token.strip()
+            if ':' not in token:
+                continue
+            k, _, v = token.partition(':')
+            k, v = k.strip(), v.strip()
+            if k in FACETABLE_SPEC_KEYS and v:
+                by_key.setdefault(k, []).append(v)
+        for k, vals in by_key.items():
+            q = Q()
+            for v in vals:
+                q |= Q(**{f'specs_fingerprint__{k}': v})
+                if k in NUMERIC_SPEC_KEYS:
+                    try:
+                        q |= Q(**{f'specs_fingerprint__{k}': int(v)})
+                    except ValueError:
+                        pass
+            queryset = queryset.filter(q)
+        return queryset.distinct()
+
     def filter_min_price(self, queryset, name, value):
         return queryset.filter(offers__current_price__gte=value).distinct()
 
@@ -82,6 +130,42 @@ class ProductFilterSet(FilterSet):
         if value:
             return queryset.filter(offers__is_available=True).distinct()
         return queryset
+
+    def filter_has_discount(self, queryset, name, value):
+        """Товары, у которых есть оффер с реальной скидкой (old_price > price)."""
+        if not value:
+            return queryset
+        return queryset.filter(
+            offers__current_old_price__gt=F('offers__current_price'),
+            offers__current_price__gt=0,
+        ).distinct()
+
+    def filter_at_historical_min(self, queryset, name, value):
+        """Товары, чья текущая минимальная цена = историческому минимуму по PriceHistory.
+
+        Аннотируем cur_min/hist_min (используется сериализатором для бейджа). Тяжёлый
+        подзапрос по истории выполняется только при этом фильтре (дашборд), не в каталоге.
+        """
+        if not value:
+            return queryset
+        hist = (
+            PriceHistory.objects
+            .filter(product=OuterRef('pk'), price__gt=0)
+            .values('product')
+            .annotate(mn=Min('price'), mx=Max('price'))
+        )
+        return (
+            queryset
+            .annotate(
+                cur_min=Min('offers__current_price'),
+                hist_min=Subquery(hist.values('mn')[:1]),
+                hist_max=Subquery(hist.values('mx')[:1]),
+            )
+            # Текущая цена на дне И цена когда-то была выше (иначе это просто
+            # единственная точка истории, а не настоящий минимум).
+            .filter(cur_min__gt=0, cur_min__lte=F('hist_min'), hist_max__gt=F('hist_min'))
+            .distinct()
+        )
 
     class Meta:
         model = Product
@@ -304,11 +388,41 @@ class CategoryFacetsView(APIView):
         )
         sources = [{'code': s['source'], 'count': s['count']} for s in sources_qs]
 
+        # Spec-фасеты: считаем распределение значений specs_fingerprint по
+        # facetable-ключам прямо в Python (товаров в категории немного, ответ
+        # кэшируется фронтом). Показываем только ключи с ≥2 разными значениями.
+        spec_counters: dict[str, Counter] = {k: Counter() for k in FACETABLE_SPEC_KEYS}
+        for sp in products.values_list('specs_fingerprint', flat=True):
+            if not isinstance(sp, dict):
+                continue
+            for k in spec_counters:
+                v = sp.get(k)
+                if v not in (None, ''):
+                    spec_counters[k][str(v)] += 1
+        specs = []
+        for key, label in SPEC_FACET_DEFS:
+            counter = spec_counters[key]
+            if len(counter) < 2:
+                continue
+            if key in NUMERIC_SPEC_KEYS:
+                items = sorted(
+                    counter.items(),
+                    key=lambda kv: (int(kv[0]) if kv[0].isdigit() else 10**9, kv[0]),
+                )
+            else:
+                items = sorted(counter.items(), key=lambda kv: -kv[1])
+            specs.append({
+                'key': key,
+                'label': label,
+                'values': [{'value': v, 'count': n} for v, n in items[:24]],
+            })
+
         return Response({
             'category': {'id': cat.id, 'slug': cat.slug, 'name': cat.name},
             'brands': brands,
             'price_range': price_range,
             'sources': sources,
+            'specs': specs,
             'total_products': products.count(),
         })
 
@@ -326,9 +440,21 @@ class DashboardView(APIView):
 
     permission_classes = [permissions.AllowAny]
 
+    # Тяжёлые подзапросы по PriceHistory делают пересчёт дорогим (~45с на проде).
+    # Данные публичные и одинаковы для всех → кешируем готовый payload целиком.
+    # Версия в ключе — чтобы смена формы/фильтров не отдавала устаревший кеш.
+    CACHE_KEY = 'dashboard:payload:v4'
+    CACHE_TTL = 600  # 10 минут
+
     def get(self, request: Request) -> Response:
         from datetime import timedelta
+
+        from django.core.cache import cache
         from django.utils import timezone
+
+        cached = cache.get(self.CACHE_KEY)
+        if cached is not None:
+            return Response(cached)
 
         # === Totals ===
         since_24h = timezone.now() - timedelta(hours=24)
@@ -340,46 +466,14 @@ class DashboardView(APIView):
             ).distinct().count(),
             'categories': Category.objects.filter(is_active=True).count(),
             'offers': Offer.objects.count(),
+            'price_records': PriceHistory.objects.count(),
             'price_records_24h': PriceHistory.objects.filter(timestamp__gte=since_24h).count(),
         }
 
-        # === Top deals: товары с актуальной скидкой (old_price > price) ===
-        # Берём офферы с денормализованной скидкой (current_old_price > current_price)
-        deals_qs = (
-            Offer.objects
-            .filter(current_old_price__gt=F('current_price'), current_price__gt=0)
-            .select_related('product', 'product__category')
-            .annotate(
-                discount_pct=ExpressionWrapper(
-                    (F('current_old_price') - F('current_price')) * 100.0 / F('current_old_price'),
-                    output_field=DecimalField(max_digits=5, decimal_places=2),
-                )
-            )
-            .order_by('-discount_pct')[:30]
-        )
-        # Дедупликация по product чтобы один товар не повторялся
-        seen_products = set()
-        top_deals = []
-        for o in deals_qs:
-            if o.product_id in seen_products:
-                continue
-            seen_products.add(o.product_id)
-            top_deals.append({
-                'id': o.product_id,
-                'name': o.product.name,
-                'slug': o.product.slug,
-                'brand': o.product.brand,
-                'category_name': o.product.category.name if o.product.category else '',
-                'image_url': o.image_url or o.product.image_url or '',
-                'price': str(o.current_price),
-                'old_price': str(o.current_old_price),
-                'discount_pct': int(o.discount_pct or 0),
-                'source': o.source,
-                'source_display': o.get_source_display(),
-                'url': o.url,
-            })
-            if len(top_deals) >= 10:
-                break
+        # top_deals больше не отображается на дашборде (минималистичный hero),
+        # поэтому дорогой расчёт скидок с коррелированными подзапросами по
+        # PriceHistory убран. Поле оставлено для обратной совместимости контракта.
+        top_deals: list = []
 
         # === Popular categories: по числу активных продуктов ===
         pop_cats_qs = (
@@ -398,11 +492,13 @@ class DashboardView(APIView):
             for c in pop_cats_qs
         ]
 
-        return Response({
+        payload = {
             'totals': totals,
             'top_deals': top_deals,
             'popular_categories': popular_categories,
-        })
+        }
+        cache.set(self.CACHE_KEY, payload, self.CACHE_TTL)
+        return Response(payload)
 
 
 def _build_compare_data(ids: list[int]) -> list[dict]:
@@ -850,6 +946,65 @@ def password_reset_confirm(request: Request) -> Response:
     user.set_password(password)
     user.save(update_fields=['password'])
     return Response({'ok': True, 'message': 'Пароль изменён. Теперь войдите с новым паролем.'})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def change_password(request: Request) -> Response:
+    """Смена пароля из ЛК: нужен текущий пароль. Сессия сохраняется."""
+    from django.contrib.auth import update_session_auth_hash
+
+    user = request.user
+    current = request.data.get('current_password', '')
+    new = request.data.get('new_password', '')
+    new_confirm = request.data.get('new_password_confirm', '')
+
+    if not user.check_password(current):
+        return Response({'error': 'Текущий пароль неверный.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(new) < 8:
+        return Response({'error': 'Новый пароль должен быть не короче 8 символов.'}, status=status.HTTP_400_BAD_REQUEST)
+    if new != new_confirm:
+        return Response({'error': 'Пароли не совпадают.'}, status=status.HTTP_400_BAD_REQUEST)
+    if new == current:
+        return Response({'error': 'Новый пароль совпадает с текущим.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user.set_password(new)
+    user.save(update_fields=['password'])
+    # set_password меняет хэш сессии → без этого пользователя бы разлогинило.
+    update_session_auth_hash(request, user)
+    return Response({'ok': True, 'message': 'Пароль изменён.'})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def change_email(request: Request) -> Response:
+    """Смена email из ЛК: нужен пароль. Новый адрес требует повторной верификации."""
+    user = request.user
+    new_email = request.data.get('email', '').strip().lower()
+    password = request.data.get('password', '')
+
+    if not user.check_password(password):
+        return Response({'error': 'Пароль неверный.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not new_email or '@' not in new_email:
+        return Response({'error': 'Укажите корректный email.'}, status=status.HTTP_400_BAD_REQUEST)
+    if new_email == (user.email or '').lower():
+        return Response({'error': 'Это уже ваш текущий email.'}, status=status.HTTP_400_BAD_REQUEST)
+    if User.objects.filter(email__iexact=new_email).exclude(pk=user.pk).exists():
+        return Response({'error': 'Этот email уже занят другим аккаунтом.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user.email = new_email
+    user.email_verified = False
+    user.email_verify_token = ''
+    user.email_verify_sent_at = None  # сбрасываем cooldown, чтобы письмо ушло сразу
+    user.save(update_fields=['email', 'email_verified', 'email_verify_token', 'email_verify_sent_at'])
+
+    try:
+        from apps.alerts.email_notify import send_verification_email
+        send_verification_email(user)
+    except Exception:
+        logger.exception('Verification email failed after email change for user %s', user.pk)
+
+    return Response(UserSerializer(user).data)
 
 
 @ensure_csrf_cookie

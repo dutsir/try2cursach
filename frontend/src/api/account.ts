@@ -40,4 +40,12 @@ export const accountApi = {
     api.post<{ ok: boolean; message: string }>('/api/auth/password-reset-confirm/', {
       uid, token, password, password_confirm,
     }),
+
+  changePassword: (current_password: string, new_password: string, new_password_confirm: string) =>
+    api.post<{ ok: boolean; message: string }>('/api/auth/change-password/', {
+      current_password, new_password, new_password_confirm,
+    }),
+
+  changeEmail: (email: string, password: string) =>
+    api.post<User>('/api/auth/change-email/', { email, password }),
 }

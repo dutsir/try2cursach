@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { accountApi } from '@/api/account'
+import { parseApiError } from '@/api/client'
 import { Button } from '@/components/ui/Button'
 
 type State = 'loading' | 'success' | 'error'
@@ -27,11 +28,7 @@ export default function VerifyEmail() {
       })
       .catch(err => {
         setState('error')
-        setMessage(
-          err?.response?.data?.error ??
-          err?.message ??
-          'Недействительная или устаревшая ссылка.'
-        )
+        setMessage(parseApiError(err, 'Недействительная или устаревшая ссылка.'))
       })
   }, [token])
 
@@ -54,7 +51,7 @@ export default function VerifyEmail() {
             <CheckCircle size={48} className="mx-auto text-scout-success mb-4" />
             <h1 className="text-xl font-bold text-scout-text mb-2">Email подтверждён!</h1>
             <p className="text-sm text-scout-muted mb-6">{message}</p>
-            <Button className="w-full" onClick={() => navigate('/dashboard')}>
+            <Button className="w-full" onClick={() => navigate('/')}>
               Перейти в дашборд
             </Button>
           </>

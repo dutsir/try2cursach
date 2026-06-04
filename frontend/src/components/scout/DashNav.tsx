@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Bell, LogOut, Plus, Search } from 'lucide-react'
+import { Bell, LogOut, Menu, ScanSearch } from 'lucide-react'
 import type { User } from '@/types'
 
 interface DashNavProps {
@@ -8,24 +8,14 @@ interface DashNavProps {
   unreadCount?: number
   onAddProduct?: () => void
   onLogout?: () => void
+  onOpenNav?: () => void
 }
 
-export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout }: DashNavProps) {
+export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout, onOpenNav }: DashNavProps) {
   const navigate = useNavigate()
   const [profileOpen, setProfileOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
   const profileRef = useRef<HTMLDivElement>(null)
 
-  function handleSearchSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const q = searchQuery.trim()
-    if (q) navigate(`/catalog?search=${encodeURIComponent(q)}`)
-    else navigate('/catalog')
-  }
-
-  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Escape') setSearchQuery('')
-  }
   const initial = user?.first_name?.charAt(0) || user?.username?.charAt(0) || 'A'
 
   useEffect(() => {
@@ -41,7 +31,14 @@ export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout }: DashN
 
   return (
     <header className="sticky top-0 z-30 h-16 flex items-center justify-between px-6 border-b border-scout-subtle bg-scout-bg">
-      <div className="flex items-center gap-8">
+      <div className="flex items-center gap-4 md:gap-8">
+        <button
+          onClick={onOpenNav}
+          className="lg:hidden w-9 h-9 -ml-1 rounded-scout text-scout-muted hover:bg-scout-subtle hover:text-scout-text transition-colors flex items-center justify-center shrink-0"
+          aria-label="Меню"
+        >
+          <Menu size={18} />
+        </button>
         <Link to="/" className="flex items-center gap-2.5">
           <div className="relative w-[22px] h-[22px] rounded-[5px] bg-scout-bg border-[1.5px] border-scout-accent">
             <span className="absolute -top-[3px] left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-scout-accent" />
@@ -50,35 +47,12 @@ export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout }: DashN
             scout
           </span>
         </Link>
-
-        <form onSubmit={handleSearchSubmit} className="hidden md:flex items-center gap-2 bg-scout-elevated border border-scout-subtle rounded-scout px-3 h-9 w-[360px] focus-within:border-scout-accent/50 transition-colors">
-          <Search size={14} className="text-scout-dim shrink-0" />
-          <input
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="Поиск по товарам, маркетплейсам…"
-            className="flex-1 bg-transparent outline-none border-none text-[13px] text-scout-text placeholder:text-scout-dim font-sans"
-          />
-          {searchQuery ? (
-            <button
-              type="submit"
-              className="text-[10px] text-scout-accent hover:text-scout-accent-hover transition-colors font-mono"
-            >
-              →
-            </button>
-          ) : (
-            <span className="font-mono text-[10px] text-scout-dim px-1.5 py-0.5 border border-scout-border rounded-[3px]">
-              ⌘K
-            </span>
-          )}
-        </form>
       </div>
 
       <div className="flex items-center gap-3 md:gap-4">
         <button onClick={onAddProduct} className="scout-btn-primary text-[13px]">
-          <Plus size={14} strokeWidth={2.5} />
-          <span className="hidden sm:inline">добавить товар</span>
+          <ScanSearch size={14} strokeWidth={2.5} />
+          <span className="hidden sm:inline">найти товар</span>
         </button>
 
         <button

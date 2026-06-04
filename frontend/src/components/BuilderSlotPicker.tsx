@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Search, Package, X } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -20,20 +20,41 @@ interface Props {
 
 export function BuilderSlotPicker({ open, onClose, onSelect, categorySlug, categoryLabel }: Props) {
   const [search, setSearch] = useState('')
+  const [broken, setBroken] = useState<Set<number>>(new Set())
   const debSearch = useDebounce(search, 350)
 
   const { data, isLoading } = useQuery({
+    // Берём свежеспарсенную выборку (не cheapest-first) — иначе вверху оседает
+    // 100-рублёвый хлам: переходники, древние Celeron'ы без фото.
     queryKey: ['builder-picker', categorySlug, debSearch],
     queryFn: () => productsApi.list({
       category_slug: categorySlug,
       search: debSearch,
-      ordering: 'min_price',
+      ordering: '-last_parsed_at',
       in_stock: true,
       page: 1,
-      page_size: 50,
+      page_size: 80,
     }),
     enabled: open && !!categorySlug,
   })
+
+  // Ранжируем как «собрать за меня»: сначала с фото, затем ближе к медиане цены
+  // категории (мейнстрим, а не дно и не топ). Так в списке — релевантные позиции.
+  const items = useMemo(() => {
+    const list = data?.results ?? []
+    const prices = list
+      .map(p => Number(p.best_offer?.price ?? 0))
+      .filter(n => n > 0)
+      .sort((a, b) => a - b)
+    const median = prices.length ? prices[Math.floor(prices.length / 2)] : 0
+    const hasPhoto = (p: Product) => (p.best_offer?.image_url ? 0 : 1)
+    return [...list].sort((a, b) => {
+      if (hasPhoto(a) !== hasPhoto(b)) return hasPhoto(a) - hasPhoto(b)
+      const da = Math.abs(Number(a.best_offer?.price ?? 0) - median)
+      const db = Math.abs(Number(b.best_offer?.price ?? 0) - median)
+      return da - db
+    })
+  }, [data])
 
   return (
     <Dialog.Root open={open} onOpenChange={v => !v && onClose()}>
@@ -81,11 +102,11 @@ export function BuilderSlotPicker({ open, onClose, onSelect, categorySlug, categ
                   <div className="flex-1 overflow-y-auto">
                     {isLoading ? (
                       <div className="flex justify-center py-12"><Spinner /></div>
-                    ) : !data?.results.length ? (
+                    ) : !items.length ? (
                       <div className="py-12 text-center text-scout-muted text-sm">Ничего не найдено</div>
                     ) : (
                       <ul className="divide-y divide-scout-subtle">
-                        {data.results.map(p => {
+                        {items.map(p => {
                           const offer = p.best_offer
                           return (
                             <li key={p.id}>
@@ -93,9 +114,14 @@ export function BuilderSlotPicker({ open, onClose, onSelect, categorySlug, categ
                                 onClick={() => { onSelect(p); onClose() }}
                                 className="flex w-full items-center gap-3 p-4 text-left hover:bg-scout-subtle/40 transition-colors"
                               >
-                                <div className="h-14 w-14 shrink-0 rounded-scout bg-scout-bg flex items-center justify-center border border-scout-subtle">
-                                  {offer?.image_url ? (
-                                    <img src={offer.image_url} alt={p.name} className="h-full w-full object-contain p-1" />
+                                <div className="h-14 w-14 shrink-0 overflow-hidden rounded-scout bg-scout-bg flex items-center justify-center border border-scout-subtle">
+                                  {offer?.image_url && !broken.has(p.id) ? (
+                                    <img
+                                      src={offer.image_url}
+                                      alt=""
+                                      onError={() => setBroken(s => new Set(s).add(p.id))}
+                                      className="h-full w-full object-contain p-1"
+                                    />
                                   ) : (
                                     <Package size={20} className="text-scout-dim" />
                                   )}
@@ -124,7 +150,7 @@ export function BuilderSlotPicker({ open, onClose, onSelect, categorySlug, categ
                   </div>
 
                   <div className="border-t border-scout-subtle px-6 py-3 text-[10px] text-scout-dim uppercase tracking-[0.08em]">
-                    показано <span className="scout-tabnums text-scout-muted">{data?.results.length ?? 0}</span> из <span className="scout-tabnums text-scout-muted">{data?.count ?? 0}</span> · только в наличии, сначала дешевле
+                    показано <span className="scout-tabnums text-scout-muted">{items.length}</span> из <span className="scout-tabnums text-scout-muted">{data?.count ?? 0}</span> · только в наличии, сначала с фото и релевантные
                   </div>
                 </div>
               </motion.div>

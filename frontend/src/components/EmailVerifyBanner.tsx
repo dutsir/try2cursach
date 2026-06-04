@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Mail, X, RefreshCw } from 'lucide-react'
 import { accountApi } from '@/api/account'
+import { parseApiError } from '@/api/client'
 import { useToast } from '@/components/ui/Toast'
 import type { User } from '@/types'
 
@@ -20,9 +21,8 @@ export function EmailVerifyBanner({ user }: Props) {
       toast('Письмо отправлено — проверьте почту', 'success')
       qc.invalidateQueries({ queryKey: ['me'] })
     },
-    onError: (err: any) => {
-      const msg = err?.response?.data?.error ?? 'Не удалось отправить письмо'
-      toast(msg, 'error')
+    onError: (err: unknown) => {
+      toast(parseApiError(err, 'Не удалось отправить письмо'), 'error')
     },
   })
 

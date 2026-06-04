@@ -105,6 +105,12 @@ export default function Login({ onLogin }: LoginProps) {
               </div>
             </div>
 
+            <div className="-mt-1 text-right">
+              <Link to="/forgot-password" className="text-sm text-scout-muted transition-colors hover:text-scout-accent">
+                забыли пароль?
+              </Link>
+            </div>
+
             <Button type="submit" loading={loading} className="mt-1 w-full">
               войти
             </Button>

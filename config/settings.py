@@ -431,6 +431,10 @@ LOGGING = {
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
+# База Gemini API. По умолчанию — прямой Google. На сервере, где Google недоступен
+# из РФ, сюда прописывается Cloudflare AI Gateway (провайдер google-ai-studio),
+# чтобы запрос к Google уходил с нероссийского IP Cloudflare.
+GEMINI_BASE_URL = os.getenv('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com')
 AI_COMPARE_CACHE_TTL = int(os.getenv('AI_COMPARE_CACHE_TTL', '86400'))
 
 
@@ -454,6 +458,9 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', '1') == '1'
 EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', '0') == '1'
+# Жёсткий таймаут на SMTP — иначе медленный/висящий сервер блокирует
+# синхронный воркхэндлер (отправка идёт прямо в запросе регистрации).
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
 DEFAULT_FROM_EMAIL = os.getenv('EMAIL_FROM', 'Scout <noreply@example.com>')
 # Базовый URL сайта — подставляется в ссылки письма (без слеша на конце).
 SITE_URL = os.getenv('SITE_URL', 'http://localhost').rstrip('/')

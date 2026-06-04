@@ -22,13 +22,25 @@ export interface Category {
   parent: number | null
 }
 
+/** Сводка лучшего оффера в списках (ProductListSerializer). */
+export interface BestOfferSummary {
+  price: string
+  old_price: string | null
+  source: Source
+  source_display?: string
+  url: string
+  image_url: string
+  offers_count?: number
+  is_available?: boolean
+}
+
+/** Полный оффер на странице товара (OfferSerializer). */
 export interface Offer {
   id: number
   product?: number
   source: Source
   source_display?: string
   url: string
-  price?: number
   current_price?: string | null
   old_price?: string | null
   is_available?: boolean
@@ -44,9 +56,11 @@ export interface Product {
   category: Category
   brand: string
   vendor_code: string | null
+  image_url?: string
   is_active: boolean
   last_parsed_at: string | null
-  best_offer: Offer | null
+  best_offer: BestOfferSummary | null
+  is_price_min?: boolean | null
 }
 
 export interface ProductDetail extends Product {
