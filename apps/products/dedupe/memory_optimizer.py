@@ -90,6 +90,8 @@ class DedupBatcher:
         self,
         offers: list[dict[str, Any]],
         upsert_fn,
+        *,
+        collect_results: bool = False,
         **upsert_kwargs,
     ) -> dict[str, Any]:
         """
@@ -111,16 +113,25 @@ class DedupBatcher:
             'batches': 0,
             'errors': 0,
         }
+        if collect_results:
+            stats['rows'] = []
 
         for batch_idx in range(0, len(offers), self.batch_size):
             batch = offers[batch_idx:batch_idx + self.batch_size]
             stats['batches'] += 1
 
             try:
-                batch_result = self._process_batch(batch, upsert_fn, **upsert_kwargs)
+                batch_result = self._process_batch(
+                    batch,
+                    upsert_fn,
+                    collect_results=collect_results,
+                    **upsert_kwargs,
+                )
                 stats['saved'] += batch_result['saved']
                 stats['new_offers'] += batch_result['new_offers']
                 stats['new_products'] += batch_result['new_products']
+                if collect_results:
+                    stats['rows'].extend(batch_result.get('rows', []))
             except Exception as exc:
                 logger.exception(
                     'Error processing batch %d (items %d-%d): %s',
@@ -147,9 +158,17 @@ class DedupBatcher:
         return stats
 
     @staticmethod
-    def _process_batch(batch: list, upsert_fn, **kwargs) -> dict:
+    def _process_batch(
+        batch: list[dict[str, Any]],
+        upsert_fn,
+        *,
+        collect_results: bool = False,
+        **kwargs,
+    ) -> dict:
         """Обработать одну партию офферов."""
         result = {'saved': 0, 'new_offers': 0, 'new_products': 0}
+        if collect_results:
+            result['rows'] = []
         for item in batch:
             try:
                 res = upsert_fn(**kwargs, **item)
@@ -158,8 +177,22 @@ class DedupBatcher:
                     result['new_offers'] += 1
                 if res.product_created:
                     result['new_products'] += 1
+                if collect_results:
+                    result['rows'].append({
+                        'offer_id': res.offer.pk,
+                        'source': item.get('source', ''),
+                        'url': item.get('url', ''),
+                        'name': item.get('name', ''),
+                    })
             except Exception as exc:
                 logger.debug('Error upserting offer %s: %s', item.get('name'), exc)
+                if collect_results:
+                    result['rows'].append({
+                        'offer_id': None,
+                        'source': item.get('source', ''),
+                        'url': item.get('url', ''),
+                        'name': item.get('name', ''),
+                    })
                 continue
         return result
 

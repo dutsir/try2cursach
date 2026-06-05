@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
@@ -14,7 +14,7 @@ import { parseApiError } from '@/api/client'
 import { productsApi } from '@/api/products'
 import { QueryError } from '@/components/ui/QueryError'
 import { subscriptionsApi } from '@/api/subscriptions'
-import { formatPrice, formatRelativeDate, SOURCE_LABELS, SOURCE_COLORS, discount, cn, getOfferPrice, getOfferOldPrice } from '@/lib/utils'
+import { cn, discount, formatPrice, formatRelativeDate, getOfferOldPrice, getOfferPrice, resolveProductImageCandidates, SOURCE_COLORS, SOURCE_LABELS } from '@/lib/utils'
 import type { PriceWindow } from '@/types'
 
 export default function ProductDetail() {
@@ -22,6 +22,7 @@ export default function ProductDetail() {
   const productId = Number(id)
   const [subscribeOpen, setSubscribeOpen] = useState(false)
   const [priceWindow, setPriceWindow] = useState<PriceWindow>('30d')
+  const [imageIndex, setImageIndex] = useState(0)
 
   const { data: product, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['product', productId],
@@ -39,6 +40,10 @@ export default function ProductDetail() {
     queryKey: ['subscriptions'],
     queryFn: subscriptionsApi.list,
   })
+
+  useEffect(() => {
+    setImageIndex(0)
+  }, [product?.id, product?.image_url, product?.best_offer?.image_url])
 
   const isSubscribed = subs?.results.some(s => s.product.id === productId) ?? false
   const subscription = subs?.results.find(s => s.product.id === productId)
@@ -60,6 +65,8 @@ export default function ProductDetail() {
     </div>
   )
 
+  const imageCandidates = resolveProductImageCandidates(product)
+  const imageSrc = imageCandidates[imageIndex] ?? null
   const bestOffer = product.best_offer ?? product.offers?.[0]
 
   return (
@@ -78,11 +85,12 @@ export default function ProductDetail() {
               <div className="flex flex-col gap-6 sm:flex-row">
                 {/* Image */}
                 <div className="flex h-48 w-full items-center justify-center rounded-scout-lg bg-scout-bg sm:w-48 sm:shrink-0">
-                  {bestOffer?.image_url ? (
+                  {imageSrc ? (
                     <img
-                      src={bestOffer.image_url}
+                      src={imageSrc}
                       alt={product.name}
                       className="h-full w-full rounded-scout-lg object-contain p-3"
+                      onError={() => setImageIndex(prev => prev + 1)}
                     />
                   ) : (
                     <Package size={56} className="text-scout-dim" />

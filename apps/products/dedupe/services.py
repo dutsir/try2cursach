@@ -81,6 +81,42 @@ def _make_unique_slug(name: str, mpn: str) -> str:
     return slug
 
 
+_PLACEHOLDER_IMAGE_MARKERS: tuple[str, ...] = (
+    'placeholder',
+    'noimage',
+    'no-image',
+    'no_photo',
+    'nophoto',
+    'default',
+    'stub',
+)
+
+
+def _is_placeholder_image(url: str) -> bool:
+    low = (url or '').strip().lower()
+    if not low:
+        return True
+    return any(marker in low for marker in _PLACEHOLDER_IMAGE_MARKERS)
+
+
+def _should_replace_product_image(current_url: str, new_url: str) -> bool:
+    new_clean = (new_url or '').strip()
+    if not new_clean:
+        return False
+    current_clean = (current_url or '').strip()
+    if not current_clean:
+        return True
+    if current_clean == new_clean:
+        return False
+    if _is_placeholder_image(current_clean) and not _is_placeholder_image(new_clean):
+        return True
+    if not current_clean.startswith('http') and new_clean.startswith('http'):
+        return True
+    if 'original' in new_clean.lower() and 'original' not in current_clean.lower():
+        return True
+    return False
+
+
 def _features_to_product(
     features: Features,
     *,
@@ -138,7 +174,7 @@ def _touch_product(product: Product, *, features: Features, name: str, image_url
     if display and display != (product.name or ''):
         product.name = display[:512]
         updates.append('name')
-    if image_url and not product.image_url:
+    if _should_replace_product_image(product.image_url, image_url):
         product.image_url = image_url[:1024]
         updates.append('image_url')
     if features.brand and not (product.brand or '').strip():

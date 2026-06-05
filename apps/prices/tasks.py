@@ -10,7 +10,7 @@ from django.utils import timezone
 from kombu.exceptions import OperationalError
 
 from apps.products.models import Category, CategoryListing, Offer, Product
-from apps.products.services import upsert_offer
+from apps.products.services import normalize_offer_url, upsert_offer
 from apps.products.dedupe.memory_optimizer import dedup_batcher
 
 from .models import ParseRun, PriceHistory
@@ -26,10 +26,20 @@ def _persist_parsed_batch(
     sync: bool,
     run: ParseRun | None = None,
 ) -> dict:
+    src_norm = (source or '').lower()
+
+    def _item_offer_key(item: Any) -> tuple[str, str] | None:
+        raw_url = (getattr(item, 'url', '') or '').strip()
+        canonical_url = normalize_offer_url(raw_url, source=src_norm) or raw_url
+        if not canonical_url:
+            return None
+        return (src_norm, canonical_url)
+
     saved = 0
     new_offers = 0
     new_products = 0
     saved_prices = 0
+    offer_ids_by_key: dict[tuple[str, str], int] = {}
 
     # Для больших категорий используем батчинг, чтобы избежать OOM
     # при дедупликации (особенно важно для мониторов, материнок и т.д.)
@@ -46,7 +56,7 @@ def _persist_parsed_batch(
         for item in parsed_products:
             offers_data.append({
                 'category': category,
-                'source': source,
+                'source': src_norm,
                 'name': item.name,
                 'url': item.url,
                 'vendor_code': item.vendor_code,
@@ -58,16 +68,26 @@ def _persist_parsed_batch(
         batch_stats = dedup_batcher.process_offers_in_batches(
             offers_data,
             upsert_offer,
+            collect_results=True,
         )
         saved = batch_stats['saved']
         new_offers = batch_stats['new_offers']
         new_products = batch_stats['new_products']
+        for row in batch_stats.get('rows', []):
+            offer_id = row.get('offer_id')
+            if not offer_id:
+                continue
+            row_source = (row.get('source') or src_norm).lower()
+            row_url = (row.get('url') or '').strip()
+            canonical_url = normalize_offer_url(row_url, source=row_source) or row_url
+            if canonical_url:
+                offer_ids_by_key[(row_source, canonical_url)] = int(offer_id)
     else:
         # Для маленьких категорий обычная обработка
         for item in parsed_products:
             res = upsert_offer(
                 category=category,
-                source=source,
+                source=src_norm,
                 name=item.name,
                 url=item.url,
                 vendor_code=item.vendor_code,
@@ -79,6 +99,31 @@ def _persist_parsed_batch(
                 new_offers += 1
             if res.product_created:
                 new_products += 1
+            key = _item_offer_key(item)
+            if key:
+                offer_ids_by_key[key] = res.offer.pk
+            if res.offer.url:
+                offer_ids_by_key[(src_norm, res.offer.url)] = res.offer.pk
+
+    # Для части исторических данных/сбоев батчера offer_id может не сохраниться
+    # в памяти — добираем такие офферы из БД по каноническому URL.
+    missing_urls = sorted({
+        k[1]
+        for k in (
+            _item_offer_key(item) for item in parsed_products
+        )
+        if k is not None and k not in offer_ids_by_key
+    })
+    if missing_urls:
+        for offer in Offer.objects.filter(source=src_norm, url__in=missing_urls).only('id', 'url'):
+            offer_ids_by_key[(src_norm, offer.url)] = offer.pk
+
+    offers_cache: dict[int, Offer] = {}
+    if offer_ids_by_key:
+        offers_cache = {
+            o.pk: o
+            for o in Offer.objects.filter(pk__in=set(offer_ids_by_key.values())).select_related('product')
+        }
 
     # Обновить extra_metadata для офферов с дополнительными полями (rating, brand и т.п.)
     items_with_extra = [
@@ -86,14 +131,13 @@ def _persist_parsed_batch(
         if getattr(item, 'extra', None)
     ]
     if items_with_extra:
-        raw_names = [item.name for item in items_with_extra]
-        offers_by_name = {
-            o.raw_name: o
-            for o in Offer.objects.filter(source=source, raw_name__in=raw_names)
-        }
         extra_updated = 0
         for item in items_with_extra:
-            offer = offers_by_name.get(item.name)
+            key = _item_offer_key(item)
+            if key is None:
+                continue
+            offer_id = offer_ids_by_key.get(key)
+            offer = offers_cache.get(offer_id) if offer_id is not None else None
             if not offer:
                 continue
             merged = dict(offer.extra_metadata or {})
@@ -104,17 +148,20 @@ def _persist_parsed_batch(
         if extra_updated:
             logger.info(
                 'Обновлены extra_metadata для %d офферов (source=%s)',
-                extra_updated, source,
+                extra_updated, src_norm,
             )
 
     # Сохранение цен (после дедупликации)
     # Повторно обработаем товары для сохранения цен
     for item in parsed_products:
         try:
-            offer = Offer.objects.filter(
-                source=source,
-                raw_name=item.name,
-            ).select_related('product').first()
+            key = _item_offer_key(item)
+            if key is None:
+                continue
+            offer_id = offer_ids_by_key.get(key)
+            if offer_id is None:
+                continue
+            offer = offers_cache.get(offer_id)
 
             if offer:
                 price_kwargs = dict(
@@ -122,7 +169,7 @@ def _persist_parsed_batch(
                     price=item.price,
                     old_price=item.old_price,
                     timestamp=timezone.now().isoformat(),
-                    source=source,
+                    source=src_norm,
                 )
                 if sync:
                     result = task_save_price(**price_kwargs)

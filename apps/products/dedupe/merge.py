@@ -22,6 +22,42 @@ from ..models import MatchReview, MergeAuditLog, Offer, Product
 logger = logging.getLogger(__name__)
 
 
+_PLACEHOLDER_IMAGE_MARKERS: tuple[str, ...] = (
+    'placeholder',
+    'noimage',
+    'no-image',
+    'no_photo',
+    'nophoto',
+    'default',
+    'stub',
+)
+
+
+def _is_placeholder_image(url: str) -> bool:
+    low = (url or '').strip().lower()
+    if not low:
+        return True
+    return any(marker in low for marker in _PLACEHOLDER_IMAGE_MARKERS)
+
+
+def _should_promote_image(current_url: str, candidate_url: str) -> bool:
+    candidate = (candidate_url or '').strip()
+    if not candidate:
+        return False
+    current = (current_url or '').strip()
+    if not current:
+        return True
+    if current == candidate:
+        return False
+    if _is_placeholder_image(current) and not _is_placeholder_image(candidate):
+        return True
+    if not current.startswith('http') and candidate.startswith('http'):
+        return True
+    if 'original' in candidate.lower() and 'original' not in current.lower():
+        return True
+    return False
+
+
 def _sources_collide(canonical: Product, dup: Product) -> set[str]:
     """Источники, представленные И у canonical, И у дубля (кроме WB-семейства).
 
@@ -123,6 +159,15 @@ def merge_products(
     if not ok:
         return {'merged': False, 'reason': reason}
 
+    dup_offer_image = (
+        Offer.objects
+        .filter(product=dup)
+        .exclude(image_url='')
+        .exclude(image_url__isnull=True)
+        .values_list('image_url', flat=True)
+        .first()
+    )
+
     from apps.prices.models import PriceHistory
     from apps.alerts.models import Notification, Subscription, WishlistItem
     from apps.builds.models import BuildItem
@@ -149,6 +194,25 @@ def merge_products(
         MatchReview, dup, canonical,
         peer_field='offer', product_field='suggested_product',
     )
+
+    promoted_image = dup.image_url or dup_offer_image or ''
+    if _should_promote_image(canonical.image_url or '', promoted_image):
+        canonical.image_url = promoted_image[:1024]
+        canonical.save(update_fields=['image_url', 'updated_at'])
+        stats['image_promoted'] = 1
+    elif not (canonical.image_url or '').strip():
+        fallback_image = (
+            Offer.objects
+            .filter(product=canonical)
+            .exclude(image_url='')
+            .exclude(image_url__isnull=True)
+            .values_list('image_url', flat=True)
+            .first()
+        )
+        if _should_promote_image(canonical.image_url or '', fallback_image or ''):
+            canonical.image_url = (fallback_image or '')[:1024]
+            canonical.save(update_fields=['image_url', 'updated_at'])
+            stats['image_promoted'] = 1
 
     MergeAuditLog.objects.create(
         from_product=canonical, to_product=canonical,

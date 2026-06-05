@@ -9,8 +9,42 @@ import { parseApiError } from '@/api/client'
 import { compareApi } from '@/api/compare'
 import { QueryError } from '@/components/ui/QueryError'
 import { useCompareStore } from '@/store/compare'
-import { formatPrice, cn } from '@/lib/utils'
+import { formatPrice, cn, resolveProductImageCandidates } from '@/lib/utils'
 import { Spinner } from '@/components/ui/Spinner'
+
+type CompareImageLike = {
+  id: number
+  name: string
+  image_url?: string | null
+  best_offer?: { image_url?: string | null } | null
+}
+
+function CompareItemImage({ item }: { item: CompareImageLike }) {
+  const [imageIndex, setImageIndex] = useState(0)
+  const candidates = resolveProductImageCandidates(item)
+  const src = candidates[imageIndex] ?? null
+
+  useEffect(() => {
+    setImageIndex(0)
+  }, [item.id, item.image_url, item.best_offer?.image_url, candidates.length])
+
+  if (!src) {
+    return (
+      <div className="flex h-24 w-full items-center justify-center bg-scout-bg rounded-scout border border-scout-subtle">
+        <Package size={32} className="text-scout-dim" />
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={src}
+      alt={item.name}
+      className="h-24 w-full object-contain bg-scout-bg rounded-scout p-1"
+      onError={() => setImageIndex(prev => prev + 1)}
+    />
+  )
+}
 
 export default function Compare() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -246,17 +280,7 @@ export default function Compare() {
                 <th key={item.id} className="w-56 border-r border-scout-subtle p-3 align-top">
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <Link to={`/products/${item.id}`} className="block flex-1 min-w-0">
-                      {item.image_url || item.best_offer?.image_url ? (
-                        <img
-                          src={item.image_url || item.best_offer?.image_url || ''}
-                          alt={item.name}
-                          className="h-24 w-full object-contain bg-scout-bg rounded-scout p-1"
-                        />
-                      ) : (
-                        <div className="flex h-24 w-full items-center justify-center bg-scout-bg rounded-scout border border-scout-subtle">
-                          <Package size={32} className="text-scout-dim" />
-                        </div>
-                      )}
+                      <CompareItemImage item={item} />
                     </Link>
                     <button
                       onClick={() => remove(item.id)}

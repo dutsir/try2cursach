@@ -375,6 +375,10 @@ DEDUP_REMATCH_COOLDOWN_HOURS = int(os.getenv('DEDUP_REMATCH_COOLDOWN_HOURS', '24
 DEDUP_CROSS_SOURCE_SPECS_ENABLED = os.getenv('DEDUP_CROSS_SOURCE_SPECS_ENABLED', '1') == '1'
 DEDUP_CROSS_SOURCE_SPECS_MIN_MATCHED = int(os.getenv('DEDUP_CROSS_SOURCE_SPECS_MIN_MATCHED', '2'))
 
+# Blocking v2: расширенный candidate-pool только для REVIEW/SHADOW контуров.
+# Живой AUTO-путь не расширяем, пока нет golden-set и стабильных метрик.
+DEDUP_BLOCKING_V2_ENABLED = os.getenv('DEDUP_BLOCKING_V2_ENABLED', '0') == '1'
+
 
 DEDUP_EMBEDDING_ENABLED = os.getenv('DEDUP_EMBEDDING_ENABLED', '1') == '1'
 DEDUP_EMBEDDING_MATCH_ENABLED = os.getenv('DEDUP_EMBEDDING_MATCH_ENABLED', '1') == '1'

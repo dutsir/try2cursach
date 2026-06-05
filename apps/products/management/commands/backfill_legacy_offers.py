@@ -17,6 +17,7 @@ _SOURCE_URL_MARKERS: dict[str, tuple[str, ...]] = {
     'dns': ('dns-shop.ru', 'dns-shop.com'),
     'citilink': ('citilink.ru',),
     'ozon': ('ozon.ru',),
+    'wb': ('wildberries.ru',),
 }
 
 
@@ -39,7 +40,7 @@ class Command(BaseCommand):
             '--source',
             action='append',
             dest='sources',
-            choices=['dns', 'citilink', 'ozon'],
+            choices=['dns', 'citilink', 'ozon', 'wb'],
             help='Ограничить магазином (можно указать несколько раз).',
         )
         parser.add_argument(

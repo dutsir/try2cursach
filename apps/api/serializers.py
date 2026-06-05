@@ -48,25 +48,88 @@ class OfferSerializer(serializers.ModelSerializer):
             'is_available', 'last_seen_at', 'current_price', 'old_price',
         )
 
+    def _fallback_price_payload(self, obj: Offer) -> dict | None:
+        by_offer = self.context.get('fallback_price_by_offer') or {}
+        by_source = self.context.get('fallback_price_by_source') or {}
+        return by_offer.get(obj.id) or by_source.get(obj.source)
+
     def get_current_price(self, obj: Offer) -> str | None:
-        return str(obj.current_price) if obj.current_price is not None else None
+        if obj.current_price is not None:
+            return str(obj.current_price)
+        fallback = self._fallback_price_payload(obj)
+        return fallback['price'] if fallback else None
 
     def get_old_price(self, obj: Offer) -> str | None:
-        return str(obj.current_old_price) if obj.current_old_price else None
+        if obj.current_old_price:
+            return str(obj.current_old_price)
+        fallback = self._fallback_price_payload(obj)
+        return fallback['old_price'] if fallback else None
+
+
+def _preferred_image_from_offers(offers: list[Offer]) -> str:
+    preferred_sources = (
+        Offer.Source.DNS,
+        Offer.Source.CITILINK,
+        Offer.Source.MVIDEO,
+    )
+    for source in preferred_sources:
+        image_url = next((o.image_url for o in offers if o.source == source and o.image_url), '')
+        if image_url:
+            return image_url
+    return next((o.image_url for o in offers if o.image_url), '')
+
+
+def _build_offer_price_fallbacks(product: Product, offers: list[Offer]) -> tuple[dict[int, dict], dict[str, dict]]:
+    offer_ids = [o.id for o in offers]
+    by_offer: dict[int, dict] = {}
+    by_source: dict[str, dict] = {}
+
+    if offer_ids:
+        latest_by_offer = (
+            PriceHistory.objects
+            .filter(offer_id__in=offer_ids, is_actual=True)
+            .order_by('offer_id', '-timestamp')
+            .distinct('offer_id')
+            .values('offer_id', 'price', 'old_price')
+        )
+        by_offer = {
+            row['offer_id']: {
+                'price': str(row['price']),
+                'old_price': str(row['old_price']) if row['old_price'] else None,
+            }
+            for row in latest_by_offer
+        }
+
+    latest_by_source = (
+        PriceHistory.objects
+        .filter(product=product, is_actual=True)
+        .order_by('source', '-timestamp')
+        .distinct('source')
+        .values('source', 'price', 'old_price')
+    )
+    by_source = {
+        row['source']: {
+            'price': str(row['price']),
+            'old_price': str(row['old_price']) if row['old_price'] else None,
+        }
+        for row in latest_by_source
+    }
+    return by_offer, by_source
 
 
 def _best_offer_summary(product: Product) -> dict | None:
     # Читаем денормализованную Offer.current_price — без N+1 по PriceHistory.
     # Если префетч offers есть, перебираем в памяти; иначе один запрос на оффер с ценой.
-    offers = [o for o in product.offers.all() if o.current_price is not None]
+    all_offers = list(product.offers.all())
+    offers = [o for o in all_offers if o.current_price is not None]
     if offers:
         best = min(offers, key=lambda o: o.current_price)
-        # Дешёвый оффер мог прийти из источника без картинки (часто после
-        # кросс-сорс дедупликации) — тогда фолбэкаем на фото любого соседнего
-        # оффера того же товара, иначе карточка остаётся без изображения.
-        image_url = best.image_url or product.image_url or ''
+        # Приоритет качества изображений для карточек:
+        # DNS -> Ситилинк -> М.Видео -> остальные источники.
+        preferred_image_url = _preferred_image_from_offers(all_offers)
+        image_url = preferred_image_url or best.image_url or product.image_url or ''
         if not image_url:
-            image_url = next((o.image_url for o in product.offers.all() if o.image_url), '')
+            image_url = _preferred_image_from_offers(all_offers)
         return {
             'price': str(best.current_price),
             'old_price': str(best.current_old_price) if best.current_old_price else None,
@@ -74,7 +137,7 @@ def _best_offer_summary(product: Product) -> dict | None:
             'source_display': best.get_source_display(),
             'url': best.url,
             'image_url': image_url,
-            'offers_count': len(product.offers.all()),
+            'offers_count': len(all_offers),
         }
 
     legacy = (
@@ -132,8 +195,14 @@ class ProductDetailSerializer(ProductListSerializer):
         )
 
     def get_offers(self, obj: Product) -> list[dict]:
-        offers = obj.offers.all().order_by('source')
-        return OfferSerializer(offers, many=True).data
+        offers = list(obj.offers.all().order_by('source'))
+        fallback_by_offer, fallback_by_source = _build_offer_price_fallbacks(obj, offers)
+        context = {
+            **self.context,
+            'fallback_price_by_offer': fallback_by_offer,
+            'fallback_price_by_source': fallback_by_source,
+        }
+        return OfferSerializer(offers, many=True, context=context).data
 
     def get_family(self, obj: Product) -> dict | None:
         f = obj.family

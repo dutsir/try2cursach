@@ -60,6 +60,70 @@ export function discount(price?: number | string | null, oldPrice?: number | str
   return Math.round(((op - p) / op) * 100)
 }
 
+type ImageProductLike = {
+  image_url?: string | null
+  best_offer?: { image_url?: string | null } | null
+  offers?: Array<{ image_url?: string | null }> | null
+}
+
+function normalizeImageUrl(url: string | null | undefined): string | null {
+  const clean = (url ?? '').trim()
+  return clean ? clean : null
+}
+
+function expandWbImageCandidates(url: string): string[] {
+  const match = url.match(
+    /^https?:\/\/basket-(\d+)\.wbbasket\.ru\/(vol\d+\/part\d+\/\d+\/images\/)([^/]+)(\/1\.[a-z0-9]+(?:\?.*)?)$/i,
+  )
+  if (!match) return [url]
+  const basket = Number(match[1])
+  const prefix = match[2]
+  const size = match[3]
+  const tail = match[4]
+
+  const out: string[] = []
+  const push = (candidate: string) => {
+    if (!candidate || out.includes(candidate)) return
+    out.push(candidate)
+  }
+
+  push(url)
+  // Тот же basket, но альтернативный размер.
+  if (size !== 'big') push(`https://basket-${basket}.wbbasket.ru/${prefix}big${tail}`)
+
+  // Смещения basket — частая причина 404 на WB.
+  const offsets = [-1, 1, -2, 2, -3, 3]
+  for (const delta of offsets) {
+    const b = basket + delta
+    if (b < 1 || b > 42) continue
+    push(`https://basket-${b}.wbbasket.ru/${prefix}${size}${tail}`)
+  }
+  return out
+}
+
+export function resolveProductImageCandidates(product: ImageProductLike | null | undefined): string[] {
+  if (!product) return []
+  const candidates: string[] = []
+  const push = (url: string | null | undefined) => {
+    const clean = normalizeImageUrl(url)
+    if (!clean || candidates.includes(clean)) return
+    const expanded = expandWbImageCandidates(clean)
+    for (const item of expanded) {
+      if (!candidates.includes(item)) candidates.push(item)
+    }
+  }
+  push(product.best_offer?.image_url)
+  push(product.image_url)
+  for (const offer of product.offers ?? []) {
+    push(offer?.image_url)
+  }
+  return candidates
+}
+
+export function resolveProductImage(product: ImageProductLike | null | undefined): string | null {
+  return resolveProductImageCandidates(product)[0] ?? null
+}
+
 export const SOURCE_LABELS: Record<string, string> = {
   dns: 'DNS',
   citilink: 'Ситилинк',

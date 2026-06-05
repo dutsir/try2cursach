@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink, Package, Heart, BookmarkPlus } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { formatPrice, discount, getOfferPrice, getOfferOldPrice } from '@/lib/utils'
+import { discount, formatPrice, getOfferOldPrice, getOfferPrice, resolveProductImageCandidates } from '@/lib/utils'
 import { wishlistApi } from '@/api/wishlist'
 import { CompareCheckbox } from './CompareCheckbox'
 import type { Product } from '@/types'
@@ -17,6 +17,7 @@ interface ProductCardProps {
 
 export function ProductCard({ product, onSubscribe, subscribed, wishlistItemId }: ProductCardProps) {
   const [optimisticInWishlist, setOptimisticInWishlist] = useState<boolean | null>(null)
+  const [imageIndex, setImageIndex] = useState(0)
   const qc = useQueryClient()
 
   const inWishlist = optimisticInWishlist ?? wishlistItemId != null
@@ -38,16 +39,23 @@ export function ProductCard({ product, onSubscribe, subscribed, wishlistItemId }
   const price = getOfferPrice(offer)
   const oldPrice = getOfferOldPrice(offer)
   const hasDiscount = price !== null && oldPrice !== null && oldPrice > price
+  const imageCandidates = resolveProductImageCandidates(product)
+  const imageSrc = imageCandidates[imageIndex] ?? null
+
+  useEffect(() => {
+    setImageIndex(0)
+  }, [product.id, product.image_url, offer?.image_url, imageCandidates.length])
 
   return (
     <div className="group flex flex-col bg-scout-elevated border border-scout-subtle rounded-scout-lg overflow-hidden transition-all duration-200 hover:border-scout-border hover:-translate-y-0.5">
       <Link to={`/products/${product.id}`} className="block bg-scout-bg">
         <div className="flex h-36 items-center justify-center">
-          {offer?.image_url ? (
+          {imageSrc ? (
             <img
-              src={offer.image_url}
+              src={imageSrc}
               alt={product.name}
               className="h-full w-full object-contain p-3"
+              onError={() => setImageIndex(prev => prev + 1)}
             />
           ) : (
             <Package size={40} className="text-scout-subtle" strokeWidth={1.5} />

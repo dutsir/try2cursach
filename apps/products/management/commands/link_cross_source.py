@@ -27,10 +27,15 @@ import time
 from collections import defaultdict
 from typing import Any
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandParser
 from django.db.models import Count
 
 from apps.products.dedupe.audit import enqueue_review
+from apps.products.dedupe.blocking_v2 import (
+    collect_blocking_v2_pairs,
+    load_blocking_v2_products,
+)
 from apps.products.dedupe.cross_source import (
     is_discriminating,
     model_signature,
@@ -85,6 +90,26 @@ class Command(BaseCommand):
                             help='Не создавать MatchReview (только AUTO-слияния).')
         parser.add_argument('--limit', type=int, default=0,
                             help='Максимум AUTO-слияний (0 = без лимита).')
+        parser.add_argument(
+            '--blocking-v2',
+            action='store_true',
+            help=(
+                'Использовать multi-pass blocking v2 ТОЛЬКО для REVIEW/экспорта. '
+                'AUTO-слияния остаются прежними.'
+            ),
+        )
+        parser.add_argument(
+            '--blocking-v2-max-pairs',
+            type=int,
+            default=300000,
+            help='Ограничение числа candidate-пар для blocking v2 (по умолчанию 300000).',
+        )
+        parser.add_argument(
+            '--blocking-v2-max-bucket',
+            type=int,
+            default=120,
+            help='Максимальный размер trigram-бакета в blocking v2 (по умолчанию 120).',
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         is_apply: bool = options.get('apply', False)
@@ -93,12 +118,19 @@ class Command(BaseCommand):
         cosine_threshold: float = float(options.get('cosine_threshold', 0.90))
         no_review: bool = options.get('no_review', False)
         limit: int = options.get('limit', 0) or 0
+        use_blocking_v2: bool = bool(
+            options.get('blocking_v2')
+            or getattr(settings, 'DEDUP_BLOCKING_V2_ENABLED', False)
+        )
+        blocking_v2_max_pairs: int = int(options.get('blocking_v2_max_pairs') or 300000)
+        blocking_v2_max_bucket: int = int(options.get('blocking_v2_max_bucket') or 120)
 
         self.stdout.write(self.style.NOTICE(
             f"Режим: {'APPLY' if is_apply else 'DRY-RUN'} | "
             f"категория={category_slug or 'все'} | "
             f"dice≥{threshold} | cosine≥{cosine_threshold} | "
-            f"review={'off' if no_review else 'on'} | limit={limit or '∞'}"
+            f"review={'off' if no_review else 'on'} | limit={limit or '∞'} | "
+            f"blocking_v2={'on' if use_blocking_v2 else 'off'}"
         ))
 
         cats = self._resolve_categories(category_slug)
@@ -108,7 +140,14 @@ class Command(BaseCommand):
         review_samples: list[str] = []
 
         for cat in cats:
-            auto_plan, review_plan = self._build_plans(cat, threshold, no_review)
+            auto_plan, review_plan = self._build_plans(
+                cat=cat,
+                threshold=threshold,
+                no_review=no_review,
+                use_blocking_v2=use_blocking_v2,
+                blocking_v2_max_pairs=blocking_v2_max_pairs,
+                blocking_v2_max_bucket=blocking_v2_max_bucket,
+            )
             if not auto_plan and not review_plan:
                 continue
             self.stdout.write(self.style.NOTICE(
@@ -120,9 +159,10 @@ class Command(BaseCommand):
                     f"  AUTO canon={canon.pk} ({','.join(sorted(canon.sources))}) "
                     f"+ {len(dups)} → {sorted(canon.sig)[:5]}"
                 )
-            for canon, dup, dice, cos in review_plan[:5]:
+            for canon, dup, dice, cos, passes in review_plan[:5]:
                 review_samples.append(
                     f"  REVIEW dice={dice:.2f} cos={cos:.2f} "
+                    f"passes={','.join(passes[:3])} "
                     f"{canon.pk}({','.join(sorted(canon.sources))})"
                     f" ~ {dup.pk}({','.join(sorted(dup.sources))}) | "
                     f"{canon.name[:38]!r} ~ {dup.name[:38]!r}"
@@ -212,9 +252,17 @@ class Command(BaseCommand):
         return out
 
     def _build_plans(
-        self, cat: Category, threshold: float, no_review: bool,
-    ) -> tuple[list[tuple[_P, list[_P]]], list[tuple[_P, _P, float, float]]]:
-        prods = [p for p in self._load_products(cat) if is_discriminating(p.sig)]
+        self,
+        *,
+        cat: Category,
+        threshold: float,
+        no_review: bool,
+        use_blocking_v2: bool,
+        blocking_v2_max_pairs: int,
+        blocking_v2_max_bucket: int,
+    ) -> tuple[list[tuple[_P, list[_P]]], list[tuple[_P, _P, float, float, list[str]]]]:
+        all_prods = self._load_products(cat)
+        prods = [p for p in all_prods if is_discriminating(p.sig)]
 
         # бакеты по бренду
         by_brand: dict[str, list[_P]] = defaultdict(list)
@@ -222,7 +270,8 @@ class Command(BaseCommand):
             by_brand[p.brand.strip().lower()].append(p)
 
         auto_plan: list[tuple[_P, list[_P]]] = []
-        review_plan: list[tuple[_P, _P, float, float]] = []
+        review_plan: list[tuple[_P, _P, float, float, list[str]]] = []
+        consumed: set[int] = set()
 
         for brand, group in by_brand.items():
             if len(group) < 2:
@@ -233,7 +282,6 @@ class Command(BaseCommand):
             for p in group:
                 by_sig[p.sig].append(p)
 
-            consumed: set[int] = set()
             for sig, members in by_sig.items():
                 if len(members) < 2:
                     continue
@@ -257,6 +305,8 @@ class Command(BaseCommand):
 
             # --- REVIEW: похожие, но не точные сигнатуры ---
             if no_review:
+                continue
+            if use_blocking_v2:
                 continue
             rest = [p for p in group if p.pk not in consumed]
             n = len(rest)
@@ -287,16 +337,26 @@ class Command(BaseCommand):
                         cos = cosine_similarity(a.emb, b.emb) if (a.emb and b.emb) else 0.0
                         # canonical — у кого больше офферов
                         canon, dup = (a, b) if a.offers >= b.offers else (b, a)
-                        review_plan.append((canon, dup, dice, cos))
+                        review_plan.append((canon, dup, dice, cos, ['brand_signature_dice']))
+
+        if not no_review and use_blocking_v2:
+            review_plan = self._build_review_plan_v2(
+                cat=cat,
+                all_prods=all_prods,
+                consumed=consumed,
+                threshold=threshold,
+                max_pairs=blocking_v2_max_pairs,
+                max_bucket_size=blocking_v2_max_bucket,
+            )
 
         return auto_plan, review_plan
 
     def _apply_reviews(
-        self, review_plan: list[tuple[_P, _P, float, float]],
+        self, review_plan: list[tuple[_P, _P, float, float, list[str]]],
         cosine_threshold: float,
     ) -> int:
         created = 0
-        for canon, dup, dice, cos in review_plan:
+        for canon, dup, dice, cos, passes in review_plan:
             canon_obj = Product.objects.filter(pk=canon.pk).first()
             if canon_obj is None:
                 continue
@@ -306,9 +366,50 @@ class Command(BaseCommand):
                     score=dice,
                     signals={'cross_source': True, 'dice': round(dice, 3),
                              'cosine': round(cos, 3),
+                             'blocking_passes': passes,
                              'high_confidence': cos >= cosine_threshold,
                              'dup_product': dup.pk},
                 )
                 if obj is not None:
                     created += 1
         return created
+
+    def _build_review_plan_v2(
+        self,
+        *,
+        cat: Category,
+        all_prods: list[_P],
+        consumed: set[int],
+        threshold: float,
+        max_pairs: int,
+        max_bucket_size: int,
+    ) -> list[tuple[_P, _P, float, float, list[str]]]:
+        by_id: dict[int, _P] = {p.pk: p for p in all_prods}
+        products_v2 = load_blocking_v2_products(category_slug=cat.slug)
+        pair_passes, _stats = collect_blocking_v2_pairs(
+            products_v2,
+            max_pairs=max_pairs,
+            max_bucket_size=max_bucket_size,
+        )
+
+        out: list[tuple[_P, _P, float, float, list[str]]] = []
+        for (a_id, b_id), passes in pair_passes.items():
+            if a_id in consumed or b_id in consumed:
+                continue
+            a = by_id.get(a_id)
+            b = by_id.get(b_id)
+            if a is None or b is None:
+                continue
+            # Для non-MPN пассов держим защиту по identity-токенам:
+            # разный чип/объём памяти не должен даже идти в review.
+            if 'category_mpn_exact' not in passes and model_tokens(a.sig) != model_tokens(b.sig):
+                continue
+            dice = signature_dice(a.sig, b.sig)
+            if dice < threshold and 'category_mpn_exact' not in passes:
+                continue
+            cos = cosine_similarity(a.emb, b.emb) if (a.emb and b.emb) else 0.0
+            canon, dup = (a, b) if a.offers >= b.offers else (b, a)
+            out.append((canon, dup, dice, cos, sorted(passes)))
+
+        out.sort(key=lambda x: (x[2], x[3], x[0].offers), reverse=True)
+        return out

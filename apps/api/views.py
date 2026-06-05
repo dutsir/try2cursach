@@ -54,6 +54,19 @@ FACETABLE_SPEC_KEYS = {k for k, _ in SPEC_FACET_DEFS}
 NUMERIC_SPEC_KEYS = {'ram_gb', 'storage_gb', 'screen_in', 'year'}
 
 
+def _preferred_offer_image(offers: list[Offer]) -> str:
+    preferred_sources = (
+        Offer.Source.DNS,
+        Offer.Source.CITILINK,
+        Offer.Source.MVIDEO,
+    )
+    for source in preferred_sources:
+        image_url = next((o.image_url for o in offers if o.source == source and o.image_url), '')
+        if image_url:
+            return image_url
+    return next((o.image_url for o in offers if o.image_url), '')
+
+
 class ProductFilterSet(FilterSet):
     source = CharFilter(method='filter_source')
     category_slug = CharFilter(method='filter_category_slug')
@@ -523,6 +536,7 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
 
     for p in ordered:
         offers = list(p.offers.all())
+        offer_image_fallback = _preferred_offer_image(offers)
         offers_by_source = {}
         best_offer = None
         best_price = None
@@ -534,7 +548,7 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
                     'old_price': str(o.current_old_price) if o.current_old_price else None,
                     'source_display': o.get_source_display(),
                     'url': o.url,
-                    'image_url': o.image_url or p.image_url or '',
+                    'image_url': o.image_url or offer_image_fallback or p.image_url or '',
                     'is_available': o.is_available,
                     'rating': o.extra_metadata.get('supplier_rating') if o.extra_metadata else None,
                     'reviews_count': o.extra_metadata.get('reviews_count') if o.extra_metadata else None,
@@ -600,7 +614,7 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
                 'source': o.source,
                 'source_display': o.get_source_display(),
                 'url': o.url,
-                'image_url': o.image_url or p.image_url or '',
+                'image_url': o.image_url or offer_image_fallback or p.image_url or '',
             }
 
         result.append({
@@ -609,7 +623,7 @@ def _build_compare_data(ids: list[int]) -> list[dict]:
             'slug': p.slug,
             'brand': p.brand,
             'category': {'id': p.category.id, 'slug': p.category.slug, 'name': p.category.name} if p.category else None,
-            'image_url': p.image_url or '',
+            'image_url': offer_image_fallback or p.image_url or '',
             'best_offer': best_info,
             'offers_by_source': offers_by_source,
             'price_trend': price_trend,

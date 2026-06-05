@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
 import random
 import re
@@ -13,6 +14,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.products.models import Offer
+from apps.prices.wildberries_parser import get_image_url as wb_get_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,12 @@ _META_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _CONTENT_RE = re.compile(r"""content\s*=\s*["'](?P<content>[^"']+)["']""", flags=re.IGNORECASE)
+_LDJSON_RE = re.compile(
+    r"""<script[^>]*type=["']application/ld\+json["'][^>]*>(?P<json>.*?)</script>""",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_WB_NM_FROM_URL_RE = re.compile(r"""/catalog/(?P<nm>\d+)/""", flags=re.IGNORECASE)
+_PLACEHOLDER_IMG_RE = re.compile(r"""placeholder|no-?image|stub|spacer|loader""", flags=re.IGNORECASE)
 
 
 def _extract_meta_image(html_text: str) -> str:
@@ -41,6 +49,48 @@ def _extract_meta_image(html_text: str) -> str:
     return ""
 
 
+def _iter_ldjson_images(node: object) -> list[str]:
+    out: list[str] = []
+    if isinstance(node, dict):
+        image = node.get("image")
+        if isinstance(image, str):
+            out.append(image)
+        elif isinstance(image, list):
+            out.extend(str(x) for x in image if isinstance(x, str))
+        elif isinstance(image, dict):
+            url = image.get("url")
+            if isinstance(url, str):
+                out.append(url)
+        for val in node.values():
+            out.extend(_iter_ldjson_images(val))
+    elif isinstance(node, list):
+        for item in node:
+            out.extend(_iter_ldjson_images(item))
+    return out
+
+
+def _extract_ldjson_image(html_text: str) -> str:
+    if not html_text:
+        return ""
+    for match in _LDJSON_RE.finditer(html_text):
+        raw = (match.group("json") or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+        for candidate in _iter_ldjson_images(payload):
+            clean = html.unescape(candidate.strip())
+            if clean and not clean.startswith("data:") and not clean.startswith("blob:"):
+                return clean
+    return ""
+
+
+def _extract_best_image(html_text: str) -> str:
+    return _extract_meta_image(html_text) or _extract_ldjson_image(html_text)
+
+
 def _normalize_image_url(page_url: str, raw_image_url: str) -> str:
     if not raw_image_url:
         return ""
@@ -52,6 +102,46 @@ def _normalize_image_url(page_url: str, raw_image_url: str) -> str:
     if u.startswith("/"):
         return urljoin(page_url, u)
     return u
+
+
+def _is_placeholder_image(url: str) -> bool:
+    u = (url or "").strip().lower()
+    if not u:
+        return True
+    return bool(_PLACEHOLDER_IMG_RE.search(u))
+
+
+def _extract_wb_nm_id(offer: Offer) -> int | None:
+    candidates = [
+        (offer.source_sku or "").strip(),
+        (offer.vendor_code or "").strip(),
+        (getattr(offer.product, "vendor_code", "") or "").strip(),
+    ]
+    for raw in candidates:
+        if raw.isdigit():
+            try:
+                return int(raw)
+            except Exception:
+                continue
+
+    url = (offer.url or "").strip()
+    if not url:
+        return None
+    m = _WB_NM_FROM_URL_RE.search(url)
+    if m:
+        try:
+            return int(m.group("nm"))
+        except Exception:
+            return None
+    return None
+
+
+def _build_wb_image_url(offer: Offer) -> str:
+    nm_id = _extract_wb_nm_id(offer)
+    if not nm_id:
+        return ""
+    # c516x688 = основной размер, fallback на big для части старых карточек.
+    return wb_get_image_url(nm_id, size="c516x688") or wb_get_image_url(nm_id, size="big")
 
 
 class Command(BaseCommand):
@@ -98,6 +188,16 @@ class Command(BaseCommand):
             action="store_true",
             help="Если у Product.image_url пусто, копировать туда найденную картинку Offer.",
         )
+        parser.add_argument(
+            "--rebuild-existing",
+            action="store_true",
+            help="Перестроить image_url даже у уже заполненных Offer (особенно полезно для wb).",
+        )
+        parser.add_argument(
+            "--upgrade-product-image",
+            action="store_true",
+            help="Обновлять Product.image_url даже если не пусто (когда там placeholder/битый URL).",
+        )
 
     def handle(self, *args, **options) -> None:
         source = (options["source"] or "").strip().lower()
@@ -107,6 +207,8 @@ class Command(BaseCommand):
         sleep_max = max(sleep_min, float(options["sleep_max"]))
         apply = bool(options["apply"])
         fill_product_image = bool(options["fill_product_image"])
+        rebuild_existing = bool(options["rebuild_existing"])
+        upgrade_product_image = bool(options["upgrade_product_image"])
 
         self.stdout.write(
             self.style.NOTICE(
@@ -118,11 +220,12 @@ class Command(BaseCommand):
         qs = (
             Offer.objects
             .filter(source=source)
-            .filter(Q(image_url="") | Q(image_url__isnull=True))
             .exclude(url="")
             .select_related("product")
             .order_by("-updated_at", "id")
         )
+        if not rebuild_existing:
+            qs = qs.filter(Q(image_url="") | Q(image_url__isnull=True))
         offers = list(qs[:limit])
         if not offers:
             self.stdout.write(self.style.WARNING("Офферов с пустой картинкой не найдено."))
@@ -147,29 +250,46 @@ class Command(BaseCommand):
 
         for i, offer in enumerate(offers, start=1):
             try:
-                resp = session.get(offer.url, timeout=timeout, allow_redirects=True)
-                if resp.status_code >= 400:
-                    failed += 1
-                    logger.info(
-                        "backfill_offer_images: offer=%s status=%s url=%s",
-                        offer.pk, resp.status_code, offer.url,
-                    )
-                    continue
-                raw_image = _extract_meta_image(resp.text or "")
-                image_url = _normalize_image_url(resp.url or offer.url, raw_image)
+                if source == "wb":
+                    image_url = _build_wb_image_url(offer)
+                else:
+                    resp = session.get(offer.url, timeout=timeout, allow_redirects=True)
+                    if resp.status_code >= 400:
+                        failed += 1
+                        logger.info(
+                            "backfill_offer_images: offer=%s status=%s url=%s",
+                            offer.pk, resp.status_code, offer.url,
+                        )
+                        continue
+                    raw_image = _extract_best_image(resp.text or "")
+                    image_url = _normalize_image_url(resp.url or offer.url, raw_image)
                 if not image_url:
                     failed += 1
                     continue
 
                 ok += 1
                 if apply:
-                    offer.image_url = image_url[:1024]
-                    offer.last_seen_at = timezone.now()
-                    offer.save(update_fields=["image_url", "last_seen_at", "updated_at"])
-                    if fill_product_image and offer.product and not (offer.product.image_url or "").strip():
-                        offer.product.image_url = image_url[:1024]
-                        offer.product.save(update_fields=["image_url", "updated_at"])
-                        updated_product += 1
+                    offer_image_before = (offer.image_url or "").strip()
+                    should_write_offer = (
+                        rebuild_existing
+                        or not offer_image_before
+                        or _is_placeholder_image(offer_image_before)
+                    )
+                    if should_write_offer and offer_image_before != image_url:
+                        offer.image_url = image_url[:1024]
+                        offer.last_seen_at = timezone.now()
+                        offer.save(update_fields=["image_url", "last_seen_at", "updated_at"])
+
+                    if fill_product_image and offer.product:
+                        product_image_before = (offer.product.image_url or "").strip()
+                        can_update_product = (
+                            (not product_image_before)
+                            or (upgrade_product_image and _is_placeholder_image(product_image_before))
+                        )
+                        if can_update_product and product_image_before != image_url:
+                            offer.product.image_url = image_url[:1024]
+                            offer.product.save(update_fields=["image_url", "updated_at"])
+                            updated_product += 1
 
                 if i <= 10:
                     self.stdout.write(
