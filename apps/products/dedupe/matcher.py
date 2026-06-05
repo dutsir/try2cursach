@@ -27,6 +27,7 @@ from .constants import (
 )
 from .cross_source import (
     is_discriminating as _sig_discriminating,
+    model_tokens as _sig_model_tokens,
     model_signature as _model_signature,
     specs_conflict as _sig_specs_conflict,
 )
@@ -414,6 +415,59 @@ def _decide(
     return 'new'
 
 
+def _auto_identity_guard(
+    *,
+    product: Product,
+    features: Features,
+    raw_name: str,
+    signals: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """Safety gate for AUTO decisions.
+
+    Разрешаем AUTO только при сильной идентичности SKU:
+    - exact MPN, или
+    - совпадающие model_tokens между входным именем и кандидатом.
+    """
+    sig = signals or {}
+    if str(sig.get('rule') or '') == 'mpn_exact':
+        return True, ''
+
+    p_mpn = (product.vendor_code or '').strip().upper()
+    f_mpn = (features.model_code or '').strip().upper()
+    if p_mpn and f_mpn and p_mpn == f_mpn:
+        return True, ''
+
+    product_tok = _sig_model_tokens(_model_signature(product.name or '', product.brand or ''))
+    incoming_tok = _sig_model_tokens(_model_signature(raw_name or '', features.brand or product.brand or ''))
+    if product_tok and incoming_tok:
+        if product_tok == incoming_tok:
+            shared = product_tok & incoming_tok
+            # Токены вида "2tb", "16gb", "104keys" слишком общие и не должны
+            # в одиночку разрешать AUTO merge.
+            generic_suffixes = ('gb', 'tb', 'mhz', 'hz', 'w', 'mm', 'keys', 'key', 'pcs')
+            has_specific = False
+            for token in shared:
+                low = token.lower()
+                has_letters = any(ch.isalpha() for ch in low)
+                has_digits = any(ch.isdigit() for ch in low)
+                if not (has_letters and has_digits):
+                    continue
+                if len(low) < 5:
+                    continue
+                if any(low.endswith(s) for s in generic_suffixes):
+                    continue
+                has_specific = True
+                break
+            if has_specific:
+                return True, ''
+            return False, 'identity_tokens_too_generic'
+        return False, 'model_tokens_mismatch'
+    if product_tok or incoming_tok:
+        return False, 'model_tokens_partial'
+
+    return False, 'missing_strong_identity'
+
+
 # Источники, у которых ВНУТРИ одного источника бывают легитимные дубли
 # (несколько продавцов/карточек одного товара) → нужна внутренняя дедупликация.
 # Для всех остальных источников (dns, citilink, mvideo, regard) товары в рамках
@@ -475,12 +529,32 @@ def find_master(
 
     cross = find_cross_source_specs_match(features, category_id=cat)
     if cross is not None and not (cross.product and cross.product.pk in blocked_ids):
+        if cross.decision == 'auto_merge' and cross.product is not None:
+            ok, why = _auto_identity_guard(
+                product=cross.product,
+                features=features,
+                raw_name=raw_name,
+                signals=cross.signals,
+            )
+            if not ok:
+                cross.decision = 'review'
+                cross.signals = {**(cross.signals or {}), 'demoted_reason': why}
         return cross
 
     sig_match = find_cross_source_signature_match(
         features, category_id=cat, raw_name=raw_name, blocked_ids=blocked_ids,
     )
     if sig_match is not None:
+        if sig_match.decision == 'auto_merge' and sig_match.product is not None:
+            ok, why = _auto_identity_guard(
+                product=sig_match.product,
+                features=features,
+                raw_name=raw_name,
+                signals=sig_match.signals,
+            )
+            if not ok:
+                sig_match.decision = 'review'
+                sig_match.signals = {**(sig_match.signals or {}), 'demoted_reason': why}
         return sig_match
 
     candidates = block_candidates(features, category_id=cat)
@@ -510,6 +584,16 @@ def find_master(
             candidate_ids=[c.pk for c in candidates],
         )
         if emb is not None:
+            if emb.decision == 'auto_merge' and emb.product is not None:
+                ok, why = _auto_identity_guard(
+                    product=emb.product,
+                    features=features,
+                    raw_name=raw_name,
+                    signals=emb.signals,
+                )
+                if not ok:
+                    emb.decision = 'review'
+                    emb.signals = {**(emb.signals or {}), 'demoted_reason': why}
             return emb
         return MatchResult(
             None, 0.0,
@@ -520,6 +604,7 @@ def find_master(
     decision = _decide(best.product, best.score, features)
     best.decision = decision
     best.signals = {
+        'rule': 'weighted_score',
         **best_signals,
         'candidates_seen': len(candidates),
         'rejected_count': len(rejected),
@@ -534,6 +619,16 @@ def find_master(
         if 'model_code' not in best_signals and hard_signals < 3:
             best.decision = 'review'
             best.signals['demoted_reason'] = 'insufficient_hard_signals'
+        elif best.product is not None:
+            ok, why = _auto_identity_guard(
+                product=best.product,
+                features=features,
+                raw_name=raw_name,
+                signals=best.signals,
+            )
+            if not ok:
+                best.decision = 'review'
+                best.signals['demoted_reason'] = why
 
     if best.decision in ('new', 'review') or best.score < AUTO_MERGE_THRESHOLD:
         emb = _try_embedding_match(
@@ -543,6 +638,16 @@ def find_master(
             candidate_ids=[c.pk for c in candidates],
         )
         if emb is not None and emb.score > best.score:
+            if emb.decision == 'auto_merge' and emb.product is not None:
+                ok, why = _auto_identity_guard(
+                    product=emb.product,
+                    features=features,
+                    raw_name=raw_name,
+                    signals=emb.signals,
+                )
+                if not ok:
+                    emb.decision = 'review'
+                    emb.signals = {**(emb.signals or {}), 'demoted_reason': why}
             return emb
 
     return best

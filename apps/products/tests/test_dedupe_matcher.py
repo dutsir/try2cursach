@@ -7,6 +7,7 @@ import pytest
 from django.test import override_settings
 
 from apps.products.dedupe.matcher import (
+    _auto_identity_guard,
     block_candidates,
     find_master,
     hard_reject,
@@ -197,6 +198,58 @@ class TestMatcherProperties:
         )
         cand = block_candidates(f, category_id=cat.pk, limit=3)
         assert len(cand) <= 3
+
+    def test_auto_identity_guard_rejects_generic_only_tokens(self):
+        cat = _ensure_category('guard-generic')
+        p = Product.objects.create(
+            name='Внешний HDD Seagate 2TB USB 3.0',
+            slug='seagate-2tb-generic',
+            category=cat,
+            brand='seagate',
+            vendor_code='',
+            url='https://example.com/p1',
+        )
+        f = normalize_offer(
+            name='Жесткий диск Seagate 2TB USB 3.0',
+            source='dns',
+            category_id=cat.pk,
+            sku='',
+            url='https://example.com/p2',
+        )
+        ok, reason = _auto_identity_guard(
+            product=p,
+            features=f,
+            raw_name='Жесткий диск Seagate 2TB USB 3.0',
+            signals={'rule': 'weighted_score'},
+        )
+        assert ok is False
+        assert reason == 'identity_tokens_too_generic'
+
+    def test_auto_identity_guard_accepts_specific_model_token(self):
+        cat = _ensure_category('guard-specific')
+        p = Product.objects.create(
+            name='Seagate STKY2000401 2TB',
+            slug='seagate-stky2000401',
+            category=cat,
+            brand='seagate',
+            vendor_code='',
+            url='https://example.com/p3',
+        )
+        f = normalize_offer(
+            name='Внешний HDD Seagate STKY2000401 2TB',
+            source='dns',
+            category_id=cat.pk,
+            sku='',
+            url='https://example.com/p4',
+        )
+        ok, reason = _auto_identity_guard(
+            product=p,
+            features=f,
+            raw_name='Внешний HDD Seagate STKY2000401 2TB',
+            signals={'rule': 'weighted_score'},
+        )
+        assert ok is True
+        assert reason == ''
 
     def test_idempotent_repeat(self):
         cat = _ensure_category('idem-test')
