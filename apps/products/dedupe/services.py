@@ -152,7 +152,8 @@ def _features_to_product(
         last_parsed_at=timezone.now(),
     )
     try:
-        product = Product.objects.create(**payload)
+        with transaction.atomic():
+            product = Product.objects.create(**payload)
         sync_product_embedding(product, features, name)
         return product, True
     except IntegrityError:
@@ -202,7 +203,8 @@ def _touch_product(product: Product, *, features: Features, name: str, image_url
     updates.extend(['last_parsed_at', 'updated_at'])
     fields = list(dict.fromkeys(updates))
     try:
-        product.save(update_fields=fields)
+        with transaction.atomic():
+            product.save(update_fields=fields)
     except IntegrityError as exc:
         # Уникальный ключ (category, brand, vendor_code) может конфликтовать —
         # часто features.model_code = «1920X1080» / разрешение монитора,
@@ -218,7 +220,8 @@ def _touch_product(product: Product, *, features: Features, name: str, image_url
             product.refresh_from_db(fields=['vendor_code'])
             cleaned = [f for f in fields if f != 'vendor_code']
             if cleaned:
-                product.save(update_fields=cleaned)
+                with transaction.atomic():
+                    product.save(update_fields=cleaned)
         else:
             raise
     if product.match_embedding is None:

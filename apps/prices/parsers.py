@@ -974,6 +974,241 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         except Exception:
             pass
 
+    # ---- HTTP-путь (curl_cffi, без браузера) -----------------------------
+    # Qrator проверяет (а) решённый JS-challenge и (б) TLS/JA3-фингерпринт.
+    # (а) берём готовые clearance-куки из реального Chrome (export_dns_cookies.py),
+    # (б) curl_cffi с impersonate=chrome отдаёт настоящий Chrome-TLS.
+    # Оба совпадают → Qrator пускает, и каталог/цены тянутся обычным HTTP
+    # без undetected_chromedriver: нет крашей Chrome, хангов и зомби, а все
+    # категории успевают в короткое (~15 мин) окно жизни qrator-кук.
+
+    _IMG_BAD_RE = re.compile(r'blank|placeholder|no-?image|spacer|loader', re.I)
+
+    def _load_cookies_dict(self) -> dict[str, str]:
+        path = getattr(settings, 'DNS_COOKIES_FILE', '') or ''
+        if not path or not os.path.isfile(path):
+            return {}
+        try:
+            with open(path, encoding='utf-8') as f:
+                cookies = json.load(f)
+        except Exception:
+            logger.warning('DNS(HTTP): не удалось прочитать cookies-файл %r', path, exc_info=True)
+            return {}
+        if not isinstance(cookies, list):
+            return {}
+        return {c['name']: c.get('value', '') for c in cookies if c.get('name')}
+
+    def _http_session(self) -> Any:
+        cr = importlib.import_module('curl_cffi.requests')
+        imp = getattr(settings, 'DNS_HTTP_IMPERSONATE', 'chrome')
+        return cr.Session(impersonate=imp)
+
+    def _best_img_from_card(self, card: Any) -> str:
+        img = card.select_one('.catalog-product__image img')
+        if img is None:
+            return ''
+        cands: list[str] = []
+        for attr in ('data-src', 'src', 'data-original', 'data-lazy', 'data-lazy-src'):
+            v = img.get(attr)
+            if v:
+                cands.append(v)
+        for attr in ('data-srcset', 'srcset'):
+            ss = img.get(attr)
+            if ss:
+                cands.append(ss.split(',')[0].strip().split(' ')[0])
+        pic = img.find_parent('picture')
+        if pic is not None:
+            for so in pic.select('source'):
+                ss = so.get('data-srcset') or so.get('srcset')
+                if ss:
+                    cands.append(ss.split(',')[0].strip().split(' ')[0])
+        for u in cands:
+            if u and u.startswith('http') and not self._IMG_BAD_RE.search(u):
+                return u
+        return ''
+
+    def _parse_cards_html(self, html: str) -> list[dict[str, Any]]:
+        bs = importlib.import_module('bs4').BeautifulSoup
+        soup = bs(html, 'lxml')
+        out: list[dict[str, Any]] = []
+        for d in soup.select('div.catalog-product[data-product]'):
+            uuid = d.get('data-product')
+            if not uuid:
+                continue
+            a = d.select_one('a.catalog-product__name') or d.select_one('a[href*="/product/"]')
+            if a is None:
+                continue
+            name = a.get_text(strip=True)
+            href = a.get('href') or ''
+            if not name or not href:
+                continue
+            if href.startswith('/'):
+                href = DNS_BASE_URL + href
+            cls = d.get('class') or []
+            avail = not any(
+                ('out-of-stock' in c or 'not-available' in c or 'sold-out' in c) for c in cls
+            )
+            out.append({
+                'uuid': uuid,
+                'code': d.get('data-code') or '',
+                'name': name,
+                'url': href,
+                'image': self._best_img_from_card(d),
+                'avail': avail,
+            })
+        return out
+
+    def _fetch_price_http(
+        self, cookies: dict[str, str], uuid: str, referer: str,
+    ) -> tuple[int | None, int | None]:
+        # Stateless: каждый вызов — самостоятельный curl_cffi-запрос (без общей
+        # сессии), поэтому безопасно дёргать из пула потоков.
+        cr = importlib.import_module('curl_cffi.requests')
+        imp = getattr(settings, 'DNS_HTTP_IMPERSONATE', 'chrome')
+        url = f'{DNS_BASE_URL}/catalog/product/get-min-price-discounts/?id={uuid}'
+        headers = {'X-Requested-With': 'XMLHttpRequest', 'Referer': referer}
+        timeout = int(getattr(settings, 'DNS_HTTP_PRICE_TIMEOUT', 12))
+        attempts = max(1, int(getattr(settings, 'DNS_HTTP_PRICE_RETRIES', 2)))
+        r = None
+        for attempt in range(attempts):
+            try:
+                r = cr.get(url, cookies=cookies, headers=headers, impersonate=imp, timeout=timeout)
+                break
+            except Exception:
+                # Qrator под нагрузкой иногда «вешает» соединение (curl 28).
+                # Тихо (без traceback) повторяем с небольшим backoff.
+                if attempt + 1 >= attempts:
+                    logger.debug('DNS(HTTP): прайс-запрос не удался id=%s после %d попыток', uuid, attempts)
+                    return None, None
+                time.sleep(0.4 * (attempt + 1) + random.uniform(0, 0.3))
+        if r is None or r.status_code != 200:
+            return None, None
+        try:
+            data = (r.json() or {}).get('data') or {}
+        except Exception:
+            return None, None
+
+        def _to_int(v: Any) -> int | None:
+            try:
+                return int(round(float(v))) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        return _to_int(data.get('current')), _to_int(data.get('previous'))
+
+    def _fetch_category_http(self, url: str) -> list[ParsedProduct]:
+        cookies = self._load_cookies_dict()
+        if not cookies or not any('qrator' in k.lower() for k in cookies):
+            raise DNSBlockedError(
+                'DNS(HTTP): нет qrator clearance-кук. Запусти '
+                'scripts/export_dns_cookies.py на хосте (Chrome должен быть '
+                'закрыт, Qrator пройден) — куки живут ~15 минут.'
+            )
+        session = self._http_session()
+        max_pages = int(getattr(settings, 'DNS_HTTP_MAX_PAGES', 50))
+        page_delay = (
+            float(getattr(settings, 'DNS_HTTP_PAGE_DELAY_MIN', 0.15)),
+            float(getattr(settings, 'DNS_HTTP_PAGE_DELAY_MAX', 0.4)),
+        )
+        price_delay = (
+            float(getattr(settings, 'DNS_HTTP_PRICE_DELAY_MIN', 0.03)),
+            float(getattr(settings, 'DNS_HTTP_PRICE_DELAY_MAX', 0.12)),
+        )
+
+        cards: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for page in range(1, max_pages + 1):
+            if page == 1:
+                page_url = url
+            else:
+                sep = '&' if '?' in url else '?'
+                page_url = f'{url}{sep}p={page}'
+            page_timeout = int(getattr(settings, 'DNS_HTTP_PAGE_TIMEOUT', 30))
+            page_retries = max(1, int(getattr(settings, 'DNS_HTTP_PAGE_RETRIES', 3)))
+            r = None
+            for attempt in range(page_retries):
+                try:
+                    r = session.get(page_url, cookies=cookies, timeout=page_timeout)
+                    break
+                except Exception:
+                    # Таймаут страницы — это НЕ конец каталога. Повторяем,
+                    # иначе случайный обрыв обрезает половину категории.
+                    if attempt + 1 >= page_retries:
+                        logger.warning(
+                            'DNS(HTTP): страница %d не ответила за %d попыток — '
+                            'пропускаю её, но продолжаю пагинацию: %s',
+                            page, page_retries, page_url,
+                        )
+                        r = None
+                        break
+                    time.sleep(0.6 * (attempt + 1) + random.uniform(0, 0.4))
+            if r is None:
+                # Страница так и не ответила: не обрываем сбор, идём дальше —
+                # вдруг следующая отдаст. Конец определяем по «нет новых карточек».
+                continue
+            if r.status_code in (401, 403):
+                if page == 1:
+                    raise DNSBlockedError(
+                        f'DNS(HTTP): {r.status_code} на первой странице — '
+                        'qrator-куки протухли или невалидны. Перезапусти '
+                        'scripts/export_dns_cookies.py.'
+                    )
+                logger.info('DNS(HTTP): страница %d отдала %d — конец пагинации.', page, r.status_code)
+                break
+            page_cards = self._parse_cards_html(r.text)
+            new = [c for c in page_cards if c['url'] not in seen]
+            if not new:
+                break
+            for c in new:
+                seen.add(c['url'])
+            cards.extend(new)
+            time.sleep(random.uniform(*page_delay))
+
+        logger.info('DNS(HTTP): собрано карточек: %d (страниц пройдено до пустой)', len(cards))
+
+        # Цены тянем параллельно: каждый прайс-запрос независим (stateless),
+        # поэтому пул потоков безопасен и режёт сотни round-trip'ов в разы.
+        workers = max(1, int(getattr(settings, 'DNS_HTTP_PRICE_WORKERS', 6)))
+        prices: dict[str, tuple[int | None, int | None]] = {}
+        if workers == 1:
+            for c in cards:
+                prices[c['uuid']] = self._fetch_price_http(cookies, c['uuid'], url)
+                time.sleep(random.uniform(*price_delay))
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                fut = {
+                    ex.submit(self._fetch_price_http, cookies, c['uuid'], url): c['uuid']
+                    for c in cards
+                }
+                for f in fut:
+                    uuid = fut[f]
+                    try:
+                        prices[uuid] = f.result()
+                    except Exception:
+                        prices[uuid] = (None, None)
+
+        products: list[ParsedProduct] = []
+        no_price = 0
+        for c in cards:
+            current, previous = prices.get(c['uuid'], (None, None))
+            if current is None:
+                no_price += 1
+                continue
+            products.append(ParsedProduct(
+                name=c['name'],
+                price=current,
+                url=c['url'],
+                vendor_code=str(c['code']),
+                image_url=c['image'],
+                old_price=previous,
+                is_available=bool(c['avail']),
+            ))
+
+        if no_price:
+            logger.info('DNS(HTTP): без цены пропущено %d из %d карточек.', no_price, len(cards))
+        return products
+
     def parse_category(self, category_url: str) -> list[ParsedProduct]:
         cu = (category_url or '').strip()
         if cu.startswith('http'):
@@ -981,6 +1216,19 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         else:
             url = f'{DNS_BASE_URL}/catalog/{cu.strip("/")}/'
         logger.info('Парсинг категории: %s', url)
+
+        if getattr(settings, 'DNS_USE_HTTP', True):
+            try:
+                products = self._fetch_category_http(url)
+                logger.info('DNS(HTTP): категория %s — товаров с ценой: %d', url, len(products))
+                return products
+            except DNSBlockedError:
+                raise
+            except Exception:
+                logger.exception('DNS(HTTP) путь упал: %s', url)
+                if not getattr(settings, 'DNS_HTTP_FALLBACK_SELENIUM', False):
+                    return []
+                logger.info('DNS: фоллбэк на Selenium-путь для %s', url)
 
         for attempt in range(1, self.max_retries + 1):
             try:
