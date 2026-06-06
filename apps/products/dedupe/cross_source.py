@@ -192,7 +192,7 @@ def specs_conflict(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
     """Жёсткий конфликт по ключевым specs (память/диск/экран/чип)."""
     a = a or {}
     b = b or {}
-    for key in ('ram_gb', 'storage_gb', 'screen_in', 'gpu_family', 'cpu_family'):
+    for key in ('ram_gb', 'storage_gb', 'screen_in', 'gpu_family', 'cpu_family', 'color'):
         av, bv = a.get(key), b.get(key)
         if av in (None, '') or bv in (None, ''):
             continue

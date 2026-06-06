@@ -428,14 +428,52 @@ def _auto_identity_guard(
     - exact MPN, или
     - совпадающие model_tokens между входным именем и кандидатом.
     """
-    sig = signals or {}
-    if str(sig.get('rule') or '') == 'mpn_exact':
-        return True, ''
-
     p_mpn = (product.vendor_code or '').strip().upper()
     f_mpn = (features.model_code or '').strip().upper()
+    sig = signals or {}
+    p_specs = product.specs_fingerprint or {}
+    f_specs = features.specs or {}
+
+    # Цвет в этой системе считается SKU-дискриминатором: белый/черный — разные товары.
+    p_color = str(p_specs.get('color') or '').strip().lower()
+    f_color = str(f_specs.get('color') or '').strip().lower()
+    if p_color and f_color and p_color != f_color:
+        return False, 'color_mismatch'
+
+    # Для AUTO не допускаем явные расхождения по variant-полям, если оба значения известны.
+    # Это защищает от слияния 16GB/64GB, 8GB/16GB и т.п. в один Product.
+    for key in ('ram_gb', 'storage_gb', 'screen_in', 'modules_count'):
+        pv = p_specs.get(key)
+        fv = f_specs.get(key)
+        if pv in (None, '') or fv in (None, ''):
+            continue
+        if str(pv) != str(fv):
+            return False, f'{key}_mismatch'
+
+    def _is_specific_identity(value: str) -> bool:
+        raw = (value or '').strip()
+        if len(raw) < 5:
+            return False
+        low = raw.lower()
+        # "seagate", "hp для ноутбука pavilion" и т.п. не являются SKU-идентичностью.
+        if not any(ch.isdigit() for ch in low):
+            return False
+        if not any(ch.isalpha() for ch in low):
+            return False
+        bad_suffixes = ('gb', 'tb', 'mhz', 'hz', 'w', 'mm', 'keys', 'key', 'pcs')
+        compact = ''.join(ch for ch in low if ch.isalnum())
+        if len(compact) < 5:
+            return False
+        if any(compact.endswith(s) for s in bad_suffixes):
+            return False
+        return True
+
     if p_mpn and f_mpn and p_mpn == f_mpn:
-        return True, ''
+        if _is_specific_identity(f_mpn):
+            return True, ''
+        # Для mpn_exact требуем не просто "равно", а что MPN действительно специфичный.
+        if str(sig.get('rule') or '') == 'mpn_exact':
+            return False, 'mpn_not_specific'
 
     product_tok = _sig_model_tokens(_model_signature(product.name or '', product.brand or ''))
     incoming_tok = _sig_model_tokens(_model_signature(raw_name or '', features.brand or product.brand or ''))
@@ -521,6 +559,23 @@ def find_master(
 
 
                 continue
+            ok, why = _auto_identity_guard(
+                product=det,
+                features=features,
+                raw_name=raw_name,
+                signals={'rule': 'mpn_exact', 'mpn': features.model_code, 'brand': features.brand},
+            )
+            if not ok:
+                return MatchResult(
+                    det, 1.0,
+                    {
+                        'rule': 'mpn_exact',
+                        'mpn': features.model_code,
+                        'brand': features.brand,
+                        'demoted_reason': why,
+                    },
+                    'review',
+                )
             return MatchResult(
                 det, 1.0,
                 {'rule': 'mpn_exact', 'mpn': features.model_code, 'brand': features.brand},

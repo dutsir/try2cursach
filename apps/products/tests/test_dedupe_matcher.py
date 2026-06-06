@@ -13,6 +13,7 @@ from apps.products.dedupe.matcher import (
     hard_reject,
     score,
 )
+from apps.products.dedupe.cross_source import specs_conflict as cross_source_specs_conflict
 from apps.products.dedupe.normalizer import normalize_offer
 from apps.products.dedupe.services import upsert_offer
 from apps.products.models import Category, MatchReview, Offer, Product
@@ -182,6 +183,12 @@ class TestMatcherProperties:
         is_rej, why = hard_reject(p, f)
         assert is_rej and why == 'category_mismatch'
 
+    def test_cross_source_specs_conflict_detects_color_mismatch(self):
+        assert cross_source_specs_conflict(
+            {'color': 'белый', 'storage_gb': 1000},
+            {'color': 'черный', 'storage_gb': 1000},
+        )
+
     def test_block_candidates_limits(self):
         cat = _ensure_category('block-test')
         for i in range(5):
@@ -250,6 +257,87 @@ class TestMatcherProperties:
         )
         assert ok is True
         assert reason == ''
+
+    def test_auto_identity_guard_rejects_generic_mpn_exact(self):
+        cat = _ensure_category('guard-generic-mpn')
+        p = Product.objects.create(
+            name='seagate Внешний жесткий диск STKP10000400',
+            slug='seagate-generic-mpn',
+            category=cat,
+            brand='seagate',
+            vendor_code='seagate',
+            url='https://example.com/sg1',
+        )
+        f = normalize_offer(
+            name='seagate Жесткий диск ST1200MM0009',
+            source='wb',
+            category_id=cat.pk,
+            sku='',
+            url='https://example.com/sg2',
+            mpn_hint='seagate',
+        )
+        ok, reason = _auto_identity_guard(
+            product=p,
+            features=f,
+            raw_name='seagate Жесткий диск ST1200MM0009',
+            signals={'rule': 'mpn_exact', 'mpn': 'seagate', 'brand': 'seagate'},
+        )
+        assert ok is False
+        assert reason == 'mpn_not_specific'
+
+    def test_auto_identity_guard_accepts_specific_mpn_exact(self):
+        cat = _ensure_category('guard-specific-mpn')
+        p = Product.objects.create(
+            name='Kingston SNV3S 4000G',
+            slug='kingston-specific-mpn',
+            category=cat,
+            brand='kingston',
+            vendor_code='SNV3S4000G',
+            url='https://example.com/ks1',
+        )
+        f = normalize_offer(
+            name='Kingston Внутренний SSD-диск SNV3S 4000G',
+            source='wb',
+            category_id=cat.pk,
+            sku='SNV3S4000G',
+            url='https://example.com/ks2',
+        )
+        ok, reason = _auto_identity_guard(
+            product=p,
+            features=f,
+            raw_name='Kingston Внутренний SSD-диск SNV3S 4000G',
+            signals={'rule': 'mpn_exact', 'mpn': 'SNV3S4000G', 'brand': 'kingston'},
+        )
+        assert ok is True
+        assert reason == ''
+
+    def test_auto_identity_guard_rejects_storage_mismatch(self):
+        cat = _ensure_category('guard-storage-mismatch')
+        p = Product.objects.create(
+            name='USB накопитель 64GB',
+            slug='usb-storage-64gb',
+            category=cat,
+            brand='testbrand',
+            vendor_code='',
+            specs_fingerprint={'storage_gb': 64},
+            url='https://example.com/st1',
+        )
+        f = normalize_offer(
+            name='USB накопитель 16GB',
+            source='wb',
+            category_id=cat.pk,
+            sku='',
+            url='https://example.com/st2',
+        )
+        f.specs = {**(f.specs or {}), 'storage_gb': 16}
+        ok, reason = _auto_identity_guard(
+            product=p,
+            features=f,
+            raw_name='USB накопитель 16GB',
+            signals={'rule': 'embedding', 'similarity': 0.93},
+        )
+        assert ok is False
+        assert reason == 'storage_gb_mismatch'
 
     def test_idempotent_repeat(self):
         cat = _ensure_category('idem-test')

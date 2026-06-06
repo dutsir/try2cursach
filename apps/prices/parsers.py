@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 DNS_BASE_URL = 'https://www.dns-shop.ru'
 
+# Кэш решённых Qrator-кук на процесс: solve стоит ~3-4с и сетевой round-trip,
+# а один прогон тянет десятки категорий — решаем раз в DNS_QRATOR_COOKIE_TTL,
+# а не на каждую категорию. (expires_at, cookies).
+_QRATOR_COOKIE_CACHE: tuple[float, dict[str, str]] | None = None
+_QRATOR_COOKIE_LOCK = threading.Lock()
+
 
 # Скрипт, который инжектится в КАЖДУЮ новую страницу через CDP
 # (Page.addScriptToEvaluateOnNewDocument) ДО выполнения скриптов сайта.
@@ -184,9 +190,10 @@ return (function () {
 
 
 DNS_BLOCKED_MSG = (
-    'DNS открыл страницу «доступ запрещён» (403): блокировка по IP/сети на стороне сайта, '
-    'не из‑за headless. Попробуйте другую сеть, VPN с выходом в РФ, или прокси в PROXY_LIST. '
-    'В курсовой допустимо описать ограничение парсинга публичного магазина.'
+    'DNS открыл страницу «доступ запрещён» (403): '
+    'блокировка по IP/сети на стороне сайта, '
+
+    
 )
 
 
@@ -210,9 +217,7 @@ return (function () {
     if (t.indexOf('снят с производства') !== -1) return false;
     return true;
   }
-  // DNS лениво грузит картинки: реальный URL может лежать не в src (там бывает
-  // прозрачный плейсхолдер/спиннер), а в srcset / data-src / <picture><source>.
-  // Собираем все кандидаты и берём первый «настоящий» http(s)-URL.
+
   function bestImg(img) {
     if (!img) return '';
     function ok(u) {
@@ -985,6 +990,19 @@ class DNSParser(ChromeDriverMixin, BaseParser):
     _IMG_BAD_RE = re.compile(r'blank|placeholder|no-?image|spacer|loader', re.I)
 
     def _load_cookies_dict(self) -> dict[str, str]:
+        # Источник qrator clearance-кук: при включённом DNS_QRATOR_SOLVER —
+        # автоматический solver (свежая qrator_jsid2 без браузера). Иначе/при
+        # сбое — ручной экспорт из DNS_COOKIES_FILE (export_dns_cookies.py).
+        if getattr(settings, 'DNS_QRATOR_SOLVER', False):
+            try:
+                return self._solve_qrator_cookies()
+            except DNSBlockedError:
+                if not getattr(settings, 'DNS_COOKIES_FILE', ''):
+                    raise
+                logger.warning(
+                    'DNS(HTTP): Qrator solver не сработал — пробую куки из файла.',
+                    exc_info=True,
+                )
         path = getattr(settings, 'DNS_COOKIES_FILE', '') or ''
         if not path or not os.path.isfile(path):
             return {}
@@ -998,10 +1016,51 @@ class DNSParser(ChromeDriverMixin, BaseParser):
             return {}
         return {c['name']: c.get('value', '') for c in cookies if c.get('name')}
 
+    def _http_proxy(self) -> str | None:
+        # Один прокси на весь HTTP-путь DNS (solve + страницы + цены).
+        # clearance Qrator привязан к IP — все запросы должны идти через него.
+        return (getattr(settings, 'DNS_HTTP_PROXY', '') or '').strip() or None
+
     def _http_session(self) -> Any:
         cr = importlib.import_module('curl_cffi.requests')
         imp = getattr(settings, 'DNS_HTTP_IMPERSONATE', 'chrome')
-        return cr.Session(impersonate=imp)
+        session = cr.Session(impersonate=imp)
+        proxy = self._http_proxy()
+        if proxy:
+            session.proxies = {'all': proxy}
+        return session
+
+    def _solve_qrator_cookies(self) -> dict[str, str]:
+        # Решает Qrator-челлендж чистым HTTP и кэширует clearance-куки на процесс.
+        # Бросает DNSBlockedError при провале — вызывающий решает, фоллбэчить ли.
+        global _QRATOR_COOKIE_CACHE
+        ttl = int(getattr(settings, 'DNS_QRATOR_COOKIE_TTL', 600))
+        now = time.time()
+        cached = _QRATOR_COOKIE_CACHE
+        if cached and cached[0] > now:
+            return cached[1]
+        with _QRATOR_COOKIE_LOCK:
+            cached = _QRATOR_COOKIE_CACHE
+            if cached and cached[0] > time.time():
+                return cached[1]
+            qmod = importlib.import_module('apps.prices.qrator')
+            try:
+                cookies = qmod.solve_clearance(
+                    site=f'{DNS_BASE_URL}/',
+                    fingerprint=getattr(settings, 'DNS_QRATOR_FINGERPRINT', 'ubuntu_win10_chrome148.json'),
+                    user_agent=getattr(settings, 'DNS_QRATOR_USER_AGENT', ''),
+                    client_hints=getattr(settings, 'DNS_QRATOR_CLIENT_HINTS', ''),
+                    revision=getattr(settings, 'DNS_QRATOR_REVISION', ''),
+                    proxy=self._http_proxy(),
+                )
+            except qmod.QratorSolveError as exc:
+                raise DNSBlockedError(f'DNS(HTTP): Qrator solver не выдал clearance: {exc}') from exc
+            _QRATOR_COOKIE_CACHE = (time.time() + max(60, ttl), cookies)
+            logger.info(
+                'DNS(HTTP): Qrator решён, clearance-куки получены (jsid2=%s), кэш на %dс.',
+                'qrator_jsid2' in cookies, ttl,
+            )
+            return cookies
 
     def _best_img_from_card(self, card: Any) -> str:
         img = card.select_one('.catalog-product__image img')
@@ -1069,10 +1128,15 @@ class DNSParser(ChromeDriverMixin, BaseParser):
         headers = {'X-Requested-With': 'XMLHttpRequest', 'Referer': referer}
         timeout = int(getattr(settings, 'DNS_HTTP_PRICE_TIMEOUT', 12))
         attempts = max(1, int(getattr(settings, 'DNS_HTTP_PRICE_RETRIES', 2)))
+        proxy = self._http_proxy()
+        proxies = {'all': proxy} if proxy else None
         r = None
         for attempt in range(attempts):
             try:
-                r = cr.get(url, cookies=cookies, headers=headers, impersonate=imp, timeout=timeout)
+                r = cr.get(
+                    url, cookies=cookies, headers=headers, impersonate=imp,
+                    timeout=timeout, proxies=proxies,
+                )
                 break
             except Exception:
                 # Qrator под нагрузкой иногда «вешает» соединение (curl 28).

@@ -207,7 +207,9 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIP
 # выполняться параллельно без риска для памяти.
 CELERY_TASK_DEFAULT_QUEUE = 'default'
 CELERY_TASK_ROUTES = {
-    'apps.prices.tasks.task_parse_category': {'queue': 'parsing_heavy'},        # DNS
+    # DNS теперь чистый HTTP (Qrator-солвер, без Chrome) → лёгкая очередь.
+    # Selenium-фоллбэк у DNS остаётся, но он не задействуется на лёгком воркере.
+    'apps.prices.tasks.task_parse_category': {'queue': 'parsing_light'},         # DNS (HTTP/solver)
     'apps.prices.tasks.task_parse_citilink_category': {'queue': 'parsing_heavy'},
     'apps.prices.tasks.task_parse_ozon_category': {'queue': 'parsing_heavy'},
     'apps.prices.tasks.task_parse_mvideo_category': {'queue': 'parsing_heavy'},  # Chrome+WAF
@@ -282,6 +284,33 @@ DNS_COOKIES_FILE = os.getenv(
     'DNS_COOKIES_FILE',
     str(BASE_DIR / 'var' / 'chrome_profiles' / 'dns_cookies.json'),
 )
+
+# === Qrator solver (автоматическая выдача clearance-кук без браузера) ===
+# Решает Qrator-челлендж чистым HTTP (apps/prices/qrator) и отдаёт свежую
+# qrator_jsid2 в HTTP-путь DNS-парсера. Заменяет ручной export_dns_cookies.py.
+# При выключенном флаге парсер работает по-старому (cookies из DNS_COOKIES_FILE).
+DNS_QRATOR_SOLVER = os.getenv('DNS_QRATOR_SOLVER', 'false').lower() in ('1', 'true', 'yes')
+# revision протухает при обновлении JS Qrator — тогда обновить отсюда.
+DNS_QRATOR_REVISION = os.getenv('DNS_QRATOR_REVISION', '911837e41007102ce04b682ca17fc142')
+DNS_QRATOR_FINGERPRINT = os.getenv('DNS_QRATOR_FINGERPRINT', 'ubuntu_win10_chrome148.json')
+DNS_QRATOR_USER_AGENT = os.getenv(
+    'DNS_QRATOR_USER_AGENT',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/148.0.0.0 Safari/537.36',
+)
+DNS_QRATOR_CLIENT_HINTS = os.getenv(
+    'DNS_QRATOR_CLIENT_HINTS',
+    '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+)
+# Сколько секунд держать решённые куки до повторного solve. Qrator-clearance
+# живёт ~15 мин; берём с запасом, чтобы не упереться в протухание в середине прогона.
+DNS_QRATOR_COOKIE_TTL = int(os.getenv('DNS_QRATOR_COOKIE_TTL', '600'))
+
+# Прокси для ВСЕГО HTTP-пути DNS (solve + страницы + цены). На датацентр-IP
+# (VPS) Qrator банит — нужен резидентный прокси. clearance привязан к IP,
+# поэтому solve и запросы обязаны идти через один и тот же прокси.
+# Формат: http://user:pass@host:port  (или socks5://...). Пусто = прямой IP.
+DNS_HTTP_PROXY = os.getenv('DNS_HTTP_PROXY', '').strip()
 
 
 CITILINK_CATALOG_ELEMENT_WAIT = int(os.getenv('CITILINK_CATALOG_ELEMENT_WAIT', '45'))
