@@ -6,7 +6,6 @@ import {
   GitCompare,
   Star,
   Target,
-  Bell as BellIcon,
   Settings as SettingsIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -24,7 +23,6 @@ interface DashSidebarProps {
   wishlistCount?: number
   compareCount?: number
   subscriptionsCount?: number
-  notificationsCount?: number
   onNavigate?: () => void
 }
 
@@ -33,7 +31,6 @@ export function DashSidebar({
   wishlistCount = 0,
   compareCount = 0,
   subscriptionsCount = 0,
-  notificationsCount = 0,
   onNavigate,
 }: DashSidebarProps) {
   const items: NavItem[] = [
@@ -43,13 +40,12 @@ export function DashSidebar({
     { to: '/compare',       label: 'Сравнение',   icon: GitCompare, count: compareCount || undefined },
     { to: '/wishlist',      label: 'Вишлист',     icon: Star,       count: wishlistCount || undefined },
     { to: '/subscriptions', label: 'Подписки',    icon: Target,     count: subscriptionsCount || undefined },
-    { to: '/notifications', label: 'Уведомления', icon: BellIcon,   count: notificationsCount || undefined },
     { to: '/settings',      label: 'Настройки',   icon: SettingsIcon },
   ]
 
   return (
     <aside className="bg-scout-bg p-4">
-      <div className="px-3 scout-caption">shelf</div>
+      <div className="px-3 scout-caption">меню</div>
       <nav className="mt-2 flex flex-col gap-0.5">
         {items.map(item => (
           <NavLink

@@ -63,7 +63,7 @@ export default function Login({ onLogin }: LoginProps) {
         <div className="mb-8">
           <div className="scout-caption mb-3">scout</div>
           <h1 className="font-display text-[44px] font-bold lowercase leading-[0.95] tracking-[-0.03em] text-scout-text">
-            welcome back.
+            добро пожаловать.
           </h1>
           <p className="mt-3 text-sm text-scout-muted">
             войди, чтобы продолжить следить за ценами.

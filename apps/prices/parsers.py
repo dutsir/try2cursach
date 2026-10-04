@@ -553,7 +553,13 @@ class ChromeDriverMixin:
         self._selenium_exceptions = None
         self._proxy_ext_dir = None
 
-        self._load_selenium_deps()
+        # Селениум грузим лениво: на лёгком образе (DNS через HTTP-солвер)
+        # Chrome/undetected-chromedriver нет, и HTTP-путь в них не нуждается.
+        # Жёстко падаем только если реально понадобится драйвер (см. _get_driver).
+        try:
+            self._load_selenium_deps()
+        except ModuleNotFoundError:
+            pass
         proxy_list: list[str] = getattr(settings, 'PROXY_LIST', [])
         self.proxy = random.choice(proxy_list) if proxy_list else None
 
@@ -744,6 +750,8 @@ class ChromeDriverMixin:
 
     def _get_driver(self) -> Any:
         if self._driver is None:
+            if self._uc is None:
+                self._load_selenium_deps()
             self._driver = self._build_driver()
         return self._driver
 

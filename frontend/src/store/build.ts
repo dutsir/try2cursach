@@ -14,6 +14,8 @@ export interface BuildSlotItem {
   brand: string
   imageUrl: string
   price: number
+  categoryId?: number
+  categoryName?: string
 }
 
 interface BuildState {
@@ -42,6 +44,8 @@ function buildToSlots(build: Build): Partial<Record<SlotKey, BuildSlotItem>> {
       brand: item.product.brand,
       imageUrl: item.product.best_offer?.image_url || '',
       price: Number(item.price_snapshot) || 0,
+      categoryId: item.product.category?.id,
+      categoryName: item.product.category?.name,
     }
   }
   return slots

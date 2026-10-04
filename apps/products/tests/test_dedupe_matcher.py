@@ -339,6 +339,79 @@ class TestMatcherProperties:
         assert ok is False
         assert reason == 'storage_gb_mismatch'
 
+    def test_auto_identity_guard_blocks_magnet_disjoint_groups(self):
+        # Канонический товар уже втянул много несвязанных моделей через офферы →
+        # AUTO в него запрещён, даже если у входящего совпадает специфичный токен.
+        cat = _ensure_category('guard-magnet')
+        p = Product.objects.create(
+            name='seagate Жесткий диск внешний STKY2000401',
+            slug='seagate-magnet-sink',
+            category=cat,
+            brand='seagate',
+            vendor_code='',
+            url='https://example.com/magnet',
+        )
+        magnet_models = [
+            'ST2000VX017', 'ST20000NM007H', 'WD10SPSX0', 'WDBWLG0060HBK',
+            'ST4000NM000A', 'ST8000VN004', 'WD40EFPX68C', 'HUS726T6TALE',
+        ]
+        for i, mdl in enumerate(magnet_models):
+            Offer.objects.create(
+                product=p,
+                source='wb',
+                url=f'https://example.com/magnet-offer-{i}',
+                raw_name=f'seagate жесткий диск {mdl} 2TB',
+            )
+        f = normalize_offer(
+            name='seagate жесткий диск ST2000VX017 2TB',
+            source='dns',
+            category_id=cat.pk,
+            sku='',
+            url='https://example.com/magnet-incoming',
+        )
+        ok, reason = _auto_identity_guard(
+            product=p,
+            features=f,
+            raw_name='seagate жесткий диск ST2000VX017 2TB',
+            signals={'rule': 'weighted_score'},
+        )
+        assert ok is False
+        assert reason.startswith('magnet_')
+
+    def test_auto_identity_guard_allows_non_magnet_family(self):
+        # Семья из вариантов ОДНОЙ модели (один общий специфичный токен) не магнит.
+        cat = _ensure_category('guard-non-magnet')
+        p = Product.objects.create(
+            name='Kingston SNV3S 1000G',
+            slug='kingston-family-ok',
+            category=cat,
+            brand='kingston',
+            vendor_code='SNV3S1000G',
+            url='https://example.com/fam',
+        )
+        for i in range(5):
+            Offer.objects.create(
+                product=p,
+                source='wb',
+                url=f'https://example.com/fam-offer-{i}',
+                raw_name='Kingston SSD SNV3S1000G NVMe',
+            )
+        f = normalize_offer(
+            name='Kingston Внутренний SSD SNV3S1000G NVMe',
+            source='dns',
+            category_id=cat.pk,
+            sku='SNV3S1000G',
+            url='https://example.com/fam-incoming',
+        )
+        ok, reason = _auto_identity_guard(
+            product=p,
+            features=f,
+            raw_name='Kingston Внутренний SSD SNV3S1000G NVMe',
+            signals={'rule': 'mpn_exact', 'mpn': 'SNV3S1000G', 'brand': 'kingston'},
+        )
+        assert ok is True
+        assert reason == ''
+
     def test_idempotent_repeat(self):
         cat = _ensure_category('idem-test')
         payload = {
@@ -429,3 +502,142 @@ class TestDuplicateProductGuard:
         assert Product.objects.filter(
             category=cat, brand='honor', vendor_code='5301ALXN',
         ).count() == 1
+
+
+@pytest.mark.django_db
+class TestL2NearMatchMerge:
+    """L2 near-match merge: чинит under-merge с несогласованным MPN."""
+
+    def _make(self, cat, name, brand, vendor_code, specs, slug, sources):
+        p = Product.objects.create(
+            name=name, slug=slug, category=cat, brand=brand,
+            vendor_code=vendor_code, specs_fingerprint=specs or {},
+            url=f'https://example.com/{slug}',
+        )
+        for i, src in enumerate(sources):
+            Offer.objects.create(
+                product=p, source=src, url=f'https://example.com/{slug}-{src}-{i}',
+                raw_name=name,
+            )
+        return p
+
+    def test_pair_conflict_allows_garbage_mpn(self):
+        # Реальный MPN vs descriptive-мусор → НЕ mpn_mismatch (это и есть under-merge).
+        from apps.products.dedupe.matcher import _l2_pair_conflict
+        cat = _ensure_category('l2-ram')
+        canon = self._make(
+            cat, 'Crucial DDR5 32GB 5600 CT32G56C46U5', 'crucial',
+            'CT32G56C46U5', {'ram_gb': 32}, 'l2-canon', ['dns', 'wb'],
+        )
+        dup = self._make(
+            cat, 'Crucial DDR5 32GB 5600МГц CL46', 'crucial',
+            'crucial ddr5 5600мгц dimm ret ddr5 5600', {'ram_gb': 32},
+            'l2-dup', ['citilink'],
+        )
+        assert _l2_pair_conflict(canon, dup) == ''
+
+    def test_pair_conflict_rejects_two_specific_mpns(self):
+        from apps.products.dedupe.matcher import _l2_pair_conflict
+        cat = _ensure_category('l2-ram2')
+        canon = self._make(
+            cat, 'Crucial CT32G56C46U5', 'crucial', 'CT32G56C46U5',
+            {'ram_gb': 32}, 'l2-a', ['dns'],
+        )
+        dup = self._make(
+            cat, 'Crucial CT16G48C40U5', 'crucial', 'CT16G48C40U5',
+            {'ram_gb': 32}, 'l2-b', ['wb'],
+        )
+        assert _l2_pair_conflict(canon, dup) == 'mpn_mismatch'
+
+    def test_pair_conflict_rejects_capacity_variant(self):
+        from apps.products.dedupe.matcher import _l2_pair_conflict
+        cat = _ensure_category('l2-ram3')
+        canon = self._make(
+            cat, 'Crucial 32GB', 'crucial', 'CT32G56C46U5',
+            {'ram_gb': 32}, 'l2-c', ['dns'],
+        )
+        dup = self._make(
+            cat, 'Crucial 64GB', 'crucial', '',
+            {'ram_gb': 64}, 'l2-d', ['citilink'],
+        )
+        assert _l2_pair_conflict(canon, dup) == 'specs_contradict'
+
+    @override_settings(
+        DEDUP_EMBEDDING_AUTO_THRESHOLD=0.86,
+        DEDUP_EMBEDDING_REVIEW_THRESHOLD=0.75,
+    )
+    def test_decide_auto_merge_high_sim(self, monkeypatch):
+        from apps.products.dedupe import matcher
+        cat = _ensure_category('l2-dec1')
+        canon = self._make(
+            cat, 'Crucial CT32G56C46U5', 'crucial', 'CT32G56C46U5',
+            {'ram_gb': 32}, 'l2-dec-canon', ['dns', 'wb'],
+        )
+        dup = self._make(
+            cat, 'Crucial DDR5 32GB 5600', 'crucial',
+            'crucial ddr5 5600', {'ram_gb': 32}, 'l2-dec-dup', ['citilink'],
+        )
+        # canon богаче офферами → остаётся canonical; sim высокий, нет overlap.
+        monkeypatch.setattr(matcher, 'find_l2_near_match', lambda p: (canon, 0.93))
+        decision = matcher.l2_decide_merge(dup)
+        assert decision is not None
+        assert decision['decision'] == 'auto_merge'
+        assert decision['canonical_id'] == canon.pk
+        assert decision['dup_id'] == dup.pk
+
+    @override_settings(
+        DEDUP_EMBEDDING_AUTO_THRESHOLD=0.86,
+        DEDUP_EMBEDDING_REVIEW_THRESHOLD=0.75,
+    )
+    def test_decide_review_on_same_source_overlap(self, monkeypatch):
+        from apps.products.dedupe import matcher
+        cat = _ensure_category('l2-dec2')
+        canon = self._make(
+            cat, 'Crucial CT32G56C46U5', 'crucial', 'CT32G56C46U5',
+            {'ram_gb': 32}, 'l2-ov-canon', ['dns', 'mvideo'],
+        )
+        dup = self._make(
+            cat, 'Crucial DDR5 32GB 5600', 'crucial',
+            'crucial ddr5 5600', {'ram_gb': 32}, 'l2-ov-dup', ['mvideo'],
+        )
+        monkeypatch.setattr(matcher, 'find_l2_near_match', lambda p: (canon, 0.95))
+        decision = matcher.l2_decide_merge(dup)
+        assert decision is not None
+        # mvideo overlap → AUTO запрещён, демоут в review.
+        assert decision['decision'] == 'review'
+        assert decision['reason'].startswith('same_source_overlap')
+
+    @override_settings(
+        DEDUP_EMBEDDING_AUTO_THRESHOLD=0.86,
+        DEDUP_EMBEDDING_REVIEW_THRESHOLD=0.75,
+    )
+    def test_decide_review_in_band(self, monkeypatch):
+        from apps.products.dedupe import matcher
+        cat = _ensure_category('l2-dec3')
+        canon = self._make(
+            cat, 'Crucial CT32G56C46U5', 'crucial', 'CT32G56C46U5',
+            {'ram_gb': 32}, 'l2-band-canon', ['dns', 'wb'],
+        )
+        dup = self._make(
+            cat, 'Crucial DDR5 32GB 5600', 'crucial',
+            'crucial ddr5 5600', {'ram_gb': 32}, 'l2-band-dup', ['citilink'],
+        )
+        monkeypatch.setattr(matcher, 'find_l2_near_match', lambda p: (canon, 0.80))
+        decision = matcher.l2_decide_merge(dup)
+        assert decision is not None
+        assert decision['decision'] == 'review'
+
+    @override_settings(DEDUP_EMBEDDING_REVIEW_THRESHOLD=0.75)
+    def test_decide_none_below_review(self, monkeypatch):
+        from apps.products.dedupe import matcher
+        cat = _ensure_category('l2-dec4')
+        canon = self._make(
+            cat, 'Crucial CT32G56C46U5', 'crucial', 'CT32G56C46U5',
+            {'ram_gb': 32}, 'l2-low-canon', ['dns'],
+        )
+        dup = self._make(
+            cat, 'Crucial DDR5 32GB', 'crucial', 'crucial ddr5',
+            {'ram_gb': 32}, 'l2-low-dup', ['citilink'],
+        )
+        monkeypatch.setattr(matcher, 'find_l2_near_match', lambda p: (canon, 0.60))
+        assert matcher.l2_decide_merge(dup) is None

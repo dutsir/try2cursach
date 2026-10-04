@@ -121,7 +121,7 @@ export default function Compare() {
       <div className="py-20 text-center animate-scout-rise">
         <div className="scout-caption mb-3">compare</div>
         <h2 className="font-display text-[40px] font-bold tracking-[-0.02em] lowercase text-scout-text mb-3">
-          nothing to compare yet.
+          пока нечего сравнивать.
         </h2>
         <p className="text-sm text-scout-muted mb-6">
           выбери товары в каталоге, чтобы сравнить их рядом.

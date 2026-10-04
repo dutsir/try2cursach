@@ -116,7 +116,7 @@ services:
       /app/docker/celery-entrypoint.sh
       celery -A config worker --loglevel=info --pool=prefork
       --concurrency=${CELERY_HEAVY_CONCURRENCY:-1}
-      -Q parsing_heavy
+      -Q parsing_citilink,parsing_mvideo,parsing_heavy
       --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-10}
       --time-limit=${CELERY_HEAVY_TIME_LIMIT:-1800}
       --soft-time-limit=${CELERY_HEAVY_SOFT_TIME_LIMIT:-1680}
@@ -162,7 +162,7 @@ services:
     command: >
       celery -A config worker --loglevel=info --pool=prefork
       --concurrency=${CELERY_LIGHT_CONCURRENCY:-2}
-      -Q parsing_light,default
+      -Q parsing_dns,parsing_wb,parsing_light,default
       --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-20}
       --time-limit=${CELERY_LIGHT_TIME_LIMIT:-600}
       --soft-time-limit=${CELERY_LIGHT_SOFT_TIME_LIMIT:-540}
@@ -200,10 +200,15 @@ services:
       DB_HOST: postgres
       RABBITMQ_HOST: rabbitmq
       REDIS_HOST: redis
+    # Один воркер на центральном боксе слушает per-source очереди лёгких источников
+    # (DNS+WB) + legacy parsing_light + default. При выносе источников на отдельные
+    # VPS их очереди (parsing_dns/parsing_wb) переедут на свои узлы (docker-compose.nodes.yml),
+    # а здесь можно сузить -Q. Chrome-очереди (parsing_citilink/parsing_mvideo) сюда
+    # НЕ включаем — на light-образе нет Chrome.
     command: >
       celery -A config worker --loglevel=info --pool=prefork
       --concurrency=${CELERY_LIGHT_CONCURRENCY:-2}
-      -Q parsing_light,default
+      -Q parsing_dns,parsing_wb,parsing_light,default
       --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-20}
       --time-limit=${CELERY_LIGHT_TIME_LIMIT:-600}
       --soft-time-limit=${CELERY_LIGHT_SOFT_TIME_LIMIT:-540}

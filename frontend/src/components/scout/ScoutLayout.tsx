@@ -121,7 +121,6 @@ export function ScoutLayout({ user, children, onLogout }: ScoutLayoutProps) {
             wishlistCount={wishlistCount}
             compareCount={compareCount}
             subscriptionsCount={subscriptionsCount}
-            notificationsCount={unreadCount}
           />
         </div>
         <main className="px-4 sm:px-6 lg:px-10 py-6 sm:py-8 lg:pb-20 lg:border-l border-scout-subtle min-h-[800px] overflow-x-hidden">
@@ -154,7 +153,6 @@ export function ScoutLayout({ user, children, onLogout }: ScoutLayoutProps) {
               wishlistCount={wishlistCount}
               compareCount={compareCount}
               subscriptionsCount={subscriptionsCount}
-              notificationsCount={unreadCount}
               onNavigate={() => setNavOpen(false)}
             />
           </div>

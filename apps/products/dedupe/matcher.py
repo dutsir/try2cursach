@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal
@@ -54,6 +55,301 @@ def _get_variant_keys_for_category(category_slug: str | None) -> frozenset[str]:
 logger = logging.getLogger(__name__)
 
 MatchDecision = Literal['auto_merge', 'review', 'new']
+
+# Токены-суффиксы которые сами по себе слишком общие, чтобы быть SKU-идентичностью
+# ("2tb", "16gb", "104keys"): они описывают вариант, а не модель.
+_GENERIC_TOKEN_SUFFIXES: tuple[str, ...] = (
+    'gb', 'tb', 'mhz', 'hz', 'w', 'mm', 'keys', 'key', 'pcs',
+)
+
+# Сколько ВЗАИМНО НЕПЕРЕСЕКАЮЩИХСЯ групп model-token'ов офферов разрешено под одним
+# Product, прежде чем он считается "магнитом" (сливающим несвязанные товары в один
+# сток). Значение настраивается через settings.DEDUP_MAGNET_GROUP_THRESHOLD.
+# См. memory project_overmerge_magnets (магниты охватывали 30–107 групп).
+_MAGNET_GROUP_THRESHOLD_DEFAULT = 6
+# Сколько офферов максимум читать при оценке магнита (защита от тяжёлых product'ов).
+_MAGNET_OFFER_SCAN_CAP = 80
+
+
+def _is_specific_identity(value: str) -> bool:
+    """True если строка похожа на конкретный SKU/модель, а не на родовое имя.
+
+    "seagate", "hp для ноутбука pavilion", "104keys" — НЕ специфичная идентичность.
+    """
+    raw = (value or '').strip()
+    if len(raw) < 5:
+        return False
+    low = raw.lower()
+    if not any(ch.isdigit() for ch in low):
+        return False
+    if not any(ch.isalpha() for ch in low):
+        return False
+    compact = ''.join(ch for ch in low if ch.isalnum())
+    if len(compact) < 5:
+        return False
+    if any(compact.endswith(s) for s in _GENERIC_TOKEN_SUFFIXES):
+        return False
+    return True
+
+
+def _is_specific_token(token: str) -> bool:
+    """Токен считается специфичным (несущим модель), если в нём есть и буквы, и цифры,
+    он не короче 5 символов и не оканчивается родовым суффиксом."""
+    low = (token or '').lower()
+    if len(low) < 5:
+        return False
+    if not (any(ch.isalpha() for ch in low) and any(ch.isdigit() for ch in low)):
+        return False
+    if any(low.endswith(s) for s in _GENERIC_TOKEN_SUFFIXES):
+        return False
+    return True
+
+
+def _magnet_group_threshold() -> int:
+    try:
+        val = int(getattr(settings, 'DEDUP_MAGNET_GROUP_THRESHOLD', _MAGNET_GROUP_THRESHOLD_DEFAULT))
+    except (TypeError, ValueError):
+        return _MAGNET_GROUP_THRESHOLD_DEFAULT
+    return val if val > 0 else _MAGNET_GROUP_THRESHOLD_DEFAULT
+
+
+def _disjoint_model_groups(product: Product) -> int:
+    """Число взаимно непересекающихся групп специфичных model-token'ов среди офферов
+    product'а. Две группы считаются связанными, если делят хотя бы один специфичный
+    токен (варианты одной модели → один компонент → не штрафуются)."""
+    token_sets: list[frozenset[str]] = []
+    offers = (
+        Offer.objects.filter(product_id=product.pk)
+        .values_list('raw_name', flat=True)[:_MAGNET_OFFER_SCAN_CAP]
+    )
+    brand = product.brand or ''
+    for raw in offers:
+        toks = _sig_model_tokens(_model_signature(raw or '', brand))
+        specific = frozenset(t for t in toks if _is_specific_token(t))
+        if specific:
+            token_sets.append(specific)
+    if not token_sets:
+        return 0
+
+    # Union-find по специфичным токенам: компоненты = непересекающиеся группы.
+    parent: dict[int, int] = {i: i for i in range(len(token_sets))}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    token_owner: dict[str, int] = {}
+    for idx, ts in enumerate(token_sets):
+        for tok in ts:
+            if tok in token_owner:
+                union(token_owner[tok], idx)
+            else:
+                token_owner[tok] = idx
+
+    return len({find(i) for i in range(len(token_sets))})
+
+
+def _is_magnet_canonical(product: Product) -> tuple[bool, str]:
+    """Является ли product "магнитом" (over-merge sink), куда нельзя добавлять AUTO.
+
+    Сигналы:
+    - имя канонического товара родовое/внешнее (нет конкретного SKU/модели) и при этом
+      он уже охватывает >1 непересекающейся группы моделей;
+    - product уже охватывает >= threshold непересекающихся групп моделей.
+    """
+    groups = _disjoint_model_groups(product)
+    threshold = _magnet_group_threshold()
+    if groups >= threshold:
+        return True, f'magnet_disjoint_groups:{groups}'
+    if groups >= 3 and not _is_specific_identity(product.name or ''):
+        return True, f'magnet_generic_name_groups:{groups}'
+    return False, ''
+
+
+_CYRILLIC_RE = re.compile(r'[а-яё]', re.I)
+
+
+def _is_real_sku(value: str) -> bool:
+    """Строгий тест: «это реальный артикул производителя», а не описательный мусор.
+
+    Отличает 'CT32G56C46U5' (настоящий SKU) от 'crucial ddr5 5600мгц dimm ret'
+    и 'CRUCIALDDR55600МГЦ46CL' (мусор, который парсеры citilink/mvideo кладут
+    в vendor_code). Реальный SKU: один токен без пробелов, только латиница/цифры/
+    разделители, без кириллицы, длина 5..24, есть и буквы и цифры, не оканчивается
+    родовым суффиксом. Используется L2-гейтом: MPN-конфликт отвергает слияние
+    ТОЛЬКО если оба значения проходят этот тест (иначе доверяем эмбеддингу+specs).
+    """
+    raw = (value or '').strip()
+    if not (5 <= len(raw) <= 24):
+        return False
+    if any(ch.isspace() for ch in raw):
+        return False
+    if _CYRILLIC_RE.search(raw):
+        return False
+    low = raw.lower()
+    if not (any(c.isalpha() for c in low) and any(c.isdigit() for c in low)):
+        return False
+    if not all(c.isascii() and (c.isalnum() or c in '-_/.') for c in low):
+        return False
+    compact = ''.join(c for c in low if c.isalnum())
+    if len(compact) < 5:
+        return False
+    if any(compact.endswith(s) for s in _GENERIC_TOKEN_SUFFIXES):
+        return False
+    return True
+
+
+def _product_offer_count(product: Product) -> int:
+    return Offer.objects.filter(product_id=product.pk).count()
+
+
+def _l2_source_overlap(canonical: Product, dup: Product) -> set[str]:
+    """non-WB источники, представленные И у canonical, И у dup.
+
+    Непустой результат означает, что AUTO-слияние создало бы запрещённую
+    внутри-источниковую склейку (см. [[dedup-principle]]) → демоутим в review.
+    """
+    canon_src = set(
+        Offer.objects.filter(product_id=canonical.pk)
+        .values_list('source', flat=True).distinct(),
+    )
+    dup_src = set(
+        Offer.objects.filter(product_id=dup.pk)
+        .values_list('source', flat=True).distinct(),
+    )
+    return {
+        s for s in (canon_src & dup_src)
+        if s and s.lower() not in WITHIN_SOURCE_DEDUP_SOURCES
+    }
+
+
+def _l2_pair_conflict(canonical: Product, dup: Product) -> str:
+    """Product-to-product гейт для L2 near-match слияния. '' = можно сливать (AUTO).
+
+    Зеркалит hard_reject/_auto_identity_guard, но для двух СУЩЕСТВУЮЩИХ Product
+    (без Features). Ключевое отличие от tier-1: MPN-конфликт отвергает слияние
+    ТОЛЬКО если оба vendor_code — реальные специфичные SKU. Мусорный
+    «descriptive» MPN (как 'crucial ddr5 5600мгц...') игнорируется, и решение
+    отдаётся эмбеддингу + specs — именно это чинит under-merge.
+    """
+    if canonical.pk == dup.pk:
+        return 'same_product'
+    if canonical.category_id != dup.category_id:
+        return 'category_mismatch'
+    if canonical.merge_locked or dup.merge_locked:
+        return 'merge_locked'
+    cb = (canonical.brand or '').strip()
+    db = (dup.brand or '').strip()
+    if cb and db and cb != db:
+        return 'brand_mismatch'
+    cm = (canonical.vendor_code or '').strip()
+    dm = (dup.vendor_code or '').strip()
+    if (cm and dm and cm.upper() != dm.upper()
+            and _is_real_sku(cm) and _is_real_sku(dm)):
+        return 'mpn_mismatch'
+    # variant/spec конфликт (ram_gb, storage_gb, screen_in, model_code, variant_key):
+    # 32GB vs 64GB и т.п. — разные товары, AUTO запрещён.
+    if specs_contradict(canonical.specs_fingerprint or {}, dup.specs_fingerprint or {}):
+        return 'specs_contradict'
+    cc = str((canonical.specs_fingerprint or {}).get('color') or '').strip().lower()
+    dc = str((dup.specs_fingerprint or {}).get('color') or '').strip().lower()
+    if cc and dc and cc != dc:
+        return 'color_mismatch'
+    is_magnet, magnet_reason = _is_magnet_canonical(canonical)
+    if is_magnet:
+        return magnet_reason
+    return ''
+
+
+def find_l2_near_match(product: Product) -> tuple[Product | None, float]:
+    """Ближайший по match_embedding товар той же категории и бренда (≠ product).
+
+    Возвращает (neighbor, similarity). similarity=1-cosine_distance. Без эмбеддинга
+    или без бренда — (None, 0.0) (консервативно: L2 не работает по «голому» имени).
+    """
+    if getattr(product, 'match_embedding', None) is None:
+        return None, 0.0
+    if not (product.brand or '').strip():
+        return None, 0.0
+    try:
+        from pgvector.django import CosineDistance
+    except ImportError:
+        return None, 0.0
+    qs = (
+        Product.objects.filter(
+            category_id=product.category_id, is_active=True, brand=product.brand,
+        )
+        .exclude(pk=product.pk)
+        .exclude(match_embedding__isnull=True)
+        .annotate(distance=CosineDistance('match_embedding', product.match_embedding))
+        .only('id', 'name', 'brand', 'vendor_code', 'category_id',
+              'specs_fingerprint', 'merge_locked', 'key_hash')
+        .order_by('distance')[:5]
+    )
+    try:
+        candidates = list(qs)
+    except Exception:
+        logger.warning('L2 pgvector ORDER BY не сработал', exc_info=True)
+        return None, 0.0
+    if not candidates:
+        return None, 0.0
+    best = candidates[0]
+    distance = float(getattr(best, 'distance', 1.0) or 1.0)
+    return best, max(0.0, 1.0 - distance)
+
+
+def l2_decide_merge(product: Product) -> dict[str, Any] | None:
+    """Решение L2 near-match merge для одного product с готовым эмбеддингом.
+
+    None — кандидата/решения нет. Иначе dict с canonical_id/dup_id/similarity и
+    decision ∈ {'auto_merge','review','skip'}:
+      - auto_merge: sim >= auto_threshold, гарды чисты, нет same-source overlap;
+      - review:     sim в [review_threshold, auto) ИЛИ есть same-source overlap;
+      - skip:       гард-конфликт (reason).
+    canonical = более «богатый» товар (больше офферов; tie → старший/меньший pk).
+    """
+    neighbor, sim = find_l2_near_match(product)
+    if neighbor is None:
+        return None
+    if sim < embedding_review_threshold():
+        return None
+
+    a_cnt = _product_offer_count(product)
+    b_cnt = _product_offer_count(neighbor)
+    # Богаче офферами → canonical; при равенстве меньший pk (старше) → canonical.
+    if (b_cnt, -neighbor.pk) > (a_cnt, -product.pk):
+        canonical, dup = neighbor, product
+    else:
+        canonical, dup = product, neighbor
+
+    conflict = _l2_pair_conflict(canonical, dup)
+    if conflict:
+        return {
+            'canonical_id': canonical.pk, 'dup_id': dup.pk,
+            'similarity': round(sim, 4), 'decision': 'skip', 'reason': conflict,
+        }
+
+    overlap = _l2_source_overlap(canonical, dup)
+    if sim >= embedding_auto_threshold() and not overlap:
+        decision = 'auto_merge'
+        reason = f'embedding_sim:{round(sim, 4)}'
+    else:
+        decision = 'review'
+        reason = (
+            f'same_source_overlap:{",".join(sorted(overlap))}'
+            if overlap else f'embedding_sim:{round(sim, 4)}'
+        )
+    return {
+        'canonical_id': canonical.pk, 'dup_id': dup.pk,
+        'similarity': round(sim, 4), 'decision': decision, 'reason': reason,
+    }
 
 
 @dataclass
@@ -440,6 +736,13 @@ def _auto_identity_guard(
     if p_color and f_color and p_color != f_color:
         return False, 'color_mismatch'
 
+    # Over-merge magnet guard: не добавляем AUTO в канонический товар-"сток", который
+    # уже втянул много несвязанных моделей (родовое/внешнее имя или множество
+    # непересекающихся model-token групп). См. memory project_overmerge_magnets.
+    is_magnet, magnet_reason = _is_magnet_canonical(product)
+    if is_magnet:
+        return False, magnet_reason
+
     # Для AUTO не допускаем явные расхождения по variant-полям, если оба значения известны.
     # Это защищает от слияния 16GB/64GB, 8GB/16GB и т.п. в один Product.
     for key in ('ram_gb', 'storage_gb', 'screen_in', 'modules_count'):
@@ -449,24 +752,6 @@ def _auto_identity_guard(
             continue
         if str(pv) != str(fv):
             return False, f'{key}_mismatch'
-
-    def _is_specific_identity(value: str) -> bool:
-        raw = (value or '').strip()
-        if len(raw) < 5:
-            return False
-        low = raw.lower()
-        # "seagate", "hp для ноутбука pavilion" и т.п. не являются SKU-идентичностью.
-        if not any(ch.isdigit() for ch in low):
-            return False
-        if not any(ch.isalpha() for ch in low):
-            return False
-        bad_suffixes = ('gb', 'tb', 'mhz', 'hz', 'w', 'mm', 'keys', 'key', 'pcs')
-        compact = ''.join(ch for ch in low if ch.isalnum())
-        if len(compact) < 5:
-            return False
-        if any(compact.endswith(s) for s in bad_suffixes):
-            return False
-        return True
 
     if p_mpn and f_mpn and p_mpn == f_mpn:
         if _is_specific_identity(f_mpn):
@@ -482,21 +767,7 @@ def _auto_identity_guard(
             shared = product_tok & incoming_tok
             # Токены вида "2tb", "16gb", "104keys" слишком общие и не должны
             # в одиночку разрешать AUTO merge.
-            generic_suffixes = ('gb', 'tb', 'mhz', 'hz', 'w', 'mm', 'keys', 'key', 'pcs')
-            has_specific = False
-            for token in shared:
-                low = token.lower()
-                has_letters = any(ch.isalpha() for ch in low)
-                has_digits = any(ch.isdigit() for ch in low)
-                if not (has_letters and has_digits):
-                    continue
-                if len(low) < 5:
-                    continue
-                if any(low.endswith(s) for s in generic_suffixes):
-                    continue
-                has_specific = True
-                break
-            if has_specific:
+            if any(_is_specific_token(token) for token in shared):
                 return True, ''
             return False, 'identity_tokens_too_generic'
         return False, 'model_tokens_mismatch'
@@ -713,7 +984,9 @@ __all__ = (
     'MatchResult',
     'block_candidates',
     'find_cross_source_specs_match',
+    'find_l2_near_match',
     'find_master',
     'hard_reject',
+    'l2_decide_merge',
     'score',
 )

@@ -102,25 +102,25 @@ export default function App() {
               <Route path="/forgot-password" element={user ? <Navigate to="/" /> : <ForgotPassword />} />
               <Route path="/reset-password"  element={<ResetPassword />} />
 
-              {/* Protected routes — all under Scout layout */}
-              <Route element={
-                <ProtectedRoute user={user}>
-                  <ScoutLayout user={user} onLogout={handleLogout} />
-                </ProtectedRoute>
-              }>
+              {/* Все маршруты под Scout layout. Публичные доступны без входа,
+                  личные — обёрнуты в ProtectedRoute. */}
+              <Route element={<ScoutLayout user={user} onLogout={handleLogout} />}>
+                {/* Публичные: просмотр товаров, каталог, сравнение */}
                 <Route path="/"              element={<Dashboard />} />
                 <Route path="/catalog"       element={<Catalog />} />
                 <Route path="/compare"       element={<Compare />} />
-                <Route path="/builder"       element={<Builder />} />
-                <Route path="/wishlist"      element={<Wishlist />} />
-                <Route path="/subscriptions" element={<Subscriptions />} />
                 <Route path="/products/:id"  element={<ProductDetail />} />
-                <Route path="/notifications" element={<Notifications />} />
-                <Route path="/settings"      element={<Settings user={user} onUserChange={setUser} />} />
+
+                {/* Личные: требуют авторизации */}
+                <Route path="/builder"       element={<ProtectedRoute user={user}><Builder /></ProtectedRoute>} />
+                <Route path="/wishlist"      element={<ProtectedRoute user={user}><Wishlist /></ProtectedRoute>} />
+                <Route path="/subscriptions" element={<ProtectedRoute user={user}><Subscriptions /></ProtectedRoute>} />
+                <Route path="/notifications" element={<ProtectedRoute user={user}><Notifications /></ProtectedRoute>} />
+                <Route path="/settings"      element={<ProtectedRoute user={user}><Settings user={user} onUserChange={setUser} /></ProtectedRoute>} />
               </Route>
 
-              {/* Fallback redirects */}
-              <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
+              {/* Fallback: всех на главную (она публичная) */}
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Suspense>
         </BrowserRouter>

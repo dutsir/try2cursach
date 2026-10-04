@@ -1,28 +1,38 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ExternalLink, Package, ShoppingCart, BookmarkPlus } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Package, ShoppingCart, Heart, GitCompare } from 'lucide-react'
 import { PriceChart } from '@/components/PriceChart'
 import { PriceWindowStats } from '@/components/PriceWindowStats'
-import { AddSubscriptionModal } from '@/components/AddSubscriptionModal'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { PageSpinner } from '@/components/ui/Spinner'
+import { useToast } from '@/components/ui/Toast'
 import { parseApiError } from '@/api/client'
 import { productsApi } from '@/api/products'
+import { wishlistApi } from '@/api/wishlist'
 import { QueryError } from '@/components/ui/QueryError'
 import { subscriptionsApi } from '@/api/subscriptions'
+import { useCompareStore } from '@/store/compare'
 import { cn, discount, formatPrice, formatRelativeDate, getOfferOldPrice, getOfferPrice, resolveProductImageCandidates, SOURCE_COLORS, SOURCE_LABELS } from '@/lib/utils'
 import type { PriceWindow } from '@/types'
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>()
   const productId = Number(id)
-  const [subscribeOpen, setSubscribeOpen] = useState(false)
   const [priceWindow, setPriceWindow] = useState<PriceWindow>('30d')
   const [imageIndex, setImageIndex] = useState(0)
+  const [optimisticInWishlist, setOptimisticInWishlist] = useState<boolean | null>(null)
+  const qc = useQueryClient()
+  const { toast } = useToast()
+
+  // Сравнение (локальный стор)
+  const compareIds = useCompareStore(s => s.ids)
+  const lockedCategoryId = useCompareStore(s => s.categoryId)
+  const toggleCompare = useCompareStore(s => s.toggle)
+  const isComparing = compareIds.includes(productId)
 
   const { data: product, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['product', productId],
@@ -41,11 +51,32 @@ export default function ProductDetail() {
     queryFn: subscriptionsApi.list,
   })
 
+  const { data: wishlist } = useQuery({
+    queryKey: ['wishlist'],
+    queryFn: () => wishlistApi.get(),
+  })
+
+  const wishlistItemId = wishlist?.items.find(i => i.product.id === productId)?.id ?? null
+  const inWishlist = optimisticInWishlist ?? wishlistItemId != null
+
+  const toggleWishlist = useMutation({
+    mutationFn: ({ remove, itemId }: { remove: boolean; itemId: number | null }) =>
+      remove && itemId != null
+        ? wishlistApi.removeItem(itemId)
+        : wishlistApi.addItem(productId),
+    onMutate: ({ remove }) => setOptimisticInWishlist(!remove),
+    onSuccess: () => {
+      setOptimisticInWishlist(null)
+      qc.invalidateQueries({ queryKey: ['wishlist'] })
+    },
+    onError: () => setOptimisticInWishlist(null),
+  })
+
   useEffect(() => {
     setImageIndex(0)
   }, [product?.id, product?.image_url, product?.best_offer?.image_url])
 
-  const isSubscribed = subs?.results.some(s => s.product.id === productId) ?? false
+  // Подписка нужна только для линии «цель» на графике (создаётся со страницы подписок).
   const subscription = subs?.results.find(s => s.product.id === productId)
 
   if (isLoading) return <PageSpinner />
@@ -68,6 +99,13 @@ export default function ProductDetail() {
   const imageCandidates = resolveProductImageCandidates(product)
   const imageSrc = imageCandidates[imageIndex] ?? null
   const bestOffer = product.best_offer ?? product.offers?.[0]
+
+  // Сравнение «привязано» к одной категории: блокируем добавление чужой.
+  const compareBlocked =
+    !isComparing &&
+    lockedCategoryId !== null &&
+    product.category != null &&
+    lockedCategoryId !== product.category.id
 
   return (
     <>
@@ -165,7 +203,7 @@ export default function ProductDetail() {
                 stats={priceStats}
               />
 
-              {/* Карточки метрик + bar-chart дневных средних */}
+              {/* Карточки метрик окна */}
               <div className="mt-6">
                 <PriceWindowStats
                   productId={productId}
@@ -173,35 +211,69 @@ export default function ProductDetail() {
                   window={priceWindow}
                 />
               </div>
-
-              {/* Подсказки про линии */}
-              <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-scout-dim">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-0.5 w-4 bg-scout-accent" /> средняя
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-scout-success" /> минимум
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-scout-danger" /> максимум
-                </span>
-                {subscription && (
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-0.5 w-4 bg-scout-success" /> цель {formatPrice(subscription.target_price)}
-                  </span>
-                )}
-              </div>
             </Card>
           </motion.div>
 
-          {/* Offers table */}
+        </div>
+
+        {/* Right col */}
+        <div className="flex flex-col gap-4">
+          {/* Action card */}
+          <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 }}>
+            <Card className="p-6 flex flex-col gap-4">
+              <h2 className="font-semibold text-scout-text">Действия</h2>
+
+              {bestOffer && (
+                <a
+                  href={bestOffer.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex w-full items-center justify-center gap-2 rounded-scout-lg bg-scout-accent py-3 font-medium text-scout-text transition hover:bg-scout-accent-hover"
+                >
+                  <ShoppingCart size={16} />
+                  Купить в {SOURCE_LABELS[bestOffer.source]}
+                </a>
+              )}
+
+              {product.category && (
+                <Button
+                  variant={isComparing ? 'secondary' : 'ghost'}
+                  className="w-full"
+                  disabled={compareBlocked}
+                  title={compareBlocked ? 'Другая категория — нельзя добавить к текущему сравнению' : undefined}
+                  onClick={() => {
+                    const res = toggleCompare(productId, {
+                      id: product.category!.id,
+                      name: product.category!.name,
+                    })
+                    if (!res.ok && res.reason) toast(res.reason, 'error')
+                  }}
+                >
+                  <GitCompare size={16} className={isComparing ? 'fill-scout-accent/30' : ''} />
+                  {isComparing ? 'Убрать из сравнения' : 'В сравнение'}
+                </Button>
+              )}
+
+              <Button
+                variant={inWishlist ? 'secondary' : 'ghost'}
+                className="w-full"
+                disabled={toggleWishlist.isPending}
+                onClick={() => toggleWishlist.mutate({ remove: inWishlist, itemId: wishlistItemId })}
+              >
+                <Heart size={16} className={inWishlist ? 'fill-scout-accent text-scout-accent' : ''} />
+                {inWishlist ? 'В вишлисте' : 'В вишлист'}
+              </Button>
+            </Card>
+          </motion.div>
+
+          {/* Offers / Цены в магазинах — под блоком действий */}
           {product.offers && product.offers.length > 0 && (
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+            <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.18 }}>
               <Card className="p-6">
                 <h2 className="mb-4 text-lg font-semibold text-scout-text">Цены в магазинах</h2>
                 <div className="flex flex-col divide-y divide-white/10">
                   {product.offers.map(offer => (
-                    <div key={offer.id} className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
+                    <div key={offer.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
                       <span
                         className="flex h-2 w-2 shrink-0 rounded-full"
                         style={{ background: SOURCE_COLORS[offer.source] }}
@@ -227,7 +299,7 @@ export default function ProductDetail() {
                         href={offer.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="ml-2 text-scout-dim hover:text-scout-text transition"
+                        className="ml-1 text-scout-dim hover:text-scout-text transition"
                       >
                         <ExternalLink size={15} />
                       </a>
@@ -237,44 +309,6 @@ export default function ProductDetail() {
               </Card>
             </motion.div>
           )}
-        </div>
-
-        {/* Right col */}
-        <div className="flex flex-col gap-4">
-          {/* Action card */}
-          <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15 }}>
-            <Card className="p-6 flex flex-col gap-4">
-              <h2 className="font-semibold text-scout-text">Действия</h2>
-
-              {bestOffer && (
-                <a
-                  href={bestOffer.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex w-full items-center justify-center gap-2 rounded-scout-lg bg-scout-accent py-3 font-medium text-scout-text transition hover:bg-scout-accent-hover"
-                >
-                  <ShoppingCart size={16} />
-                  Купить в {SOURCE_LABELS[bestOffer.source]}
-                </a>
-              )}
-
-              <Button
-                variant={isSubscribed ? 'secondary' : 'ghost'}
-                className="w-full"
-                onClick={() => setSubscribeOpen(true)}
-              >
-                <BookmarkPlus size={16} />
-                {isSubscribed ? 'Изменить подписку' : 'Следить за ценой'}
-              </Button>
-
-              {isSubscribed && subscription && (
-                <div className="rounded-scout-lg bg-scout-accent/10 px-4 py-3 text-sm">
-                  <p className="text-scout-muted">Ваша целевая цена:</p>
-                  <p className="text-lg font-bold text-scout-accent">{formatPrice(subscription.target_price)}</p>
-                </div>
-              )}
-            </Card>
-          </motion.div>
 
           {/* Last updated */}
           {product.last_parsed_at && (
@@ -288,12 +322,6 @@ export default function ProductDetail() {
           )}
         </div>
       </div>
-
-      <AddSubscriptionModal
-        open={subscribeOpen}
-        onClose={() => setSubscribeOpen(false)}
-        preselectedProduct={product}
-      />
     </>
   )
 }

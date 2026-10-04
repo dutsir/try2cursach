@@ -1,0 +1,166 @@
+# docker-compose.nodes.yml — распределённый мульти-VPS деплой парсеров + L2-дедуп.
+#
+# Идея: центральный VPS держит источник истины (postgres) + broker (rabbitmq) +
+# result backend (redis) + web/frontend. Каждый ПАРСЕР выносится на отдельный VPS
+# (отдельный IP — главное ради антибот-WAF) и слушает ТОЛЬКО свою per-source очередь.
+# L2-дедуп (torch/эмбеддинги) — на ещё одном узле. Все узлы ходят в центральную
+# БД/брокер по WireGuard.
+#
+# --- Подготовка КАЖДОГО узла ---
+#   1. WireGuard поднят, центральный хаб доступен по приватному IP (напр. 10.8.0.1).
+#   2. Репозиторий склонирован/rsync'нут в одну и ту же папку.
+#   3. В .env на узле выставить адреса центрального хаба (см. .env.nodes.example):
+#         DB_HOST=10.8.0.1   RABBITMQ_HOST=10.8.0.1   REDIS_HOST=10.8.0.1
+#      и общие креды БД/брокера (те же, что на центральном боксе).
+#   4. На ЦЕНТРАЛЬНОМ боксе открыть порты для WG-сети:
+#         postgres 5432, rabbitmq 5672, redis 6379 — слушать на wg-интерфейсе,
+#         фаервол пускать только из подсети WG.
+#
+# --- Запуск нужного узла (по профилю) ---
+#   DNS-узел:        docker compose -f docker-compose.nodes.yml --profile node-dns up -d
+#   WB-узел:         docker compose -f docker-compose.nodes.yml --profile node-wb up -d
+#   Citilink-узел:   docker compose -f docker-compose.nodes.yml --profile node-citilink up -d
+#   MVideo-узел:     docker compose -f docker-compose.nodes.yml --profile node-mvideo up -d
+#   L2-дедуп-узел:   docker compose -f docker-compose.nodes.yml --profile node-dedup up -d
+#
+# Beat (планировщик) остаётся на центральном боксе (docker-compose.yml, профиль
+# vps-celery) — узлы только ИСПОЛНЯЮТ задачи из своих очередей.
+
+services:
+  # ---------- DNS (HTTP/Qrator-solver, без Chrome) → light image ----------
+  node-dns:
+    profiles: ["node-dns"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery-light
+    container_name: pm_node_dns
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${NODE_DNS_CONCURRENCY:-1}
+      -Q parsing_dns,default
+      --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-10}
+      --time-limit=${NODE_DNS_TIME_LIMIT:-1800}
+      --soft-time-limit=${NODE_DNS_SOFT_TIME_LIMIT:-1680}
+      --hostname=dns@%h
+    volumes:
+      - .:/app
+    deploy:
+      resources:
+        limits:
+          memory: ${NODE_DNS_MEM_LIMIT:-1500m}
+        reservations:
+          memory: 256m
+
+  # ---------- Wildberries (HTTP) → light image ----------
+  node-wb:
+    profiles: ["node-wb"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery-light
+    container_name: pm_node_wb
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${NODE_WB_CONCURRENCY:-2}
+      -Q parsing_wb,default
+      --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-20}
+      --time-limit=${NODE_WB_TIME_LIMIT:-900}
+      --soft-time-limit=${NODE_WB_SOFT_TIME_LIMIT:-840}
+      --hostname=wb@%h
+    volumes:
+      - .:/app
+    deploy:
+      resources:
+        limits:
+          memory: ${NODE_WB_MEM_LIMIT:-1500m}
+        reservations:
+          memory: 256m
+
+  # ---------- Citilink (Selenium+Chrome) → heavy image ----------
+  node-citilink:
+    profiles: ["node-citilink"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
+    container_name: pm_node_citilink
+    restart: unless-stopped
+    env_file: .env
+    shm_size: '1gb'
+    command: >
+      /app/docker/celery-entrypoint.sh
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${NODE_CITILINK_CONCURRENCY:-1}
+      -Q parsing_citilink
+      --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-10}
+      --time-limit=${NODE_CITILINK_TIME_LIMIT:-1800}
+      --soft-time-limit=${NODE_CITILINK_SOFT_TIME_LIMIT:-1680}
+      --hostname=citilink@%h
+    volumes:
+      - .:/app
+    deploy:
+      resources:
+        limits:
+          memory: ${NODE_CITILINK_MEM_LIMIT:-4g}
+        reservations:
+          memory: 1G
+
+  # ---------- М.Видео (Selenium+Chrome+WAF) → heavy image ----------
+  node-mvideo:
+    profiles: ["node-mvideo"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
+    container_name: pm_node_mvideo
+    restart: unless-stopped
+    env_file: .env
+    shm_size: '1gb'
+    command: >
+      /app/docker/celery-entrypoint.sh
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${NODE_MVIDEO_CONCURRENCY:-1}
+      -Q parsing_mvideo
+      --max-tasks-per-child=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-10}
+      --time-limit=${NODE_MVIDEO_TIME_LIMIT:-1800}
+      --soft-time-limit=${NODE_MVIDEO_SOFT_TIME_LIMIT:-1680}
+      --hostname=mvideo@%h
+    volumes:
+      - .:/app
+    deploy:
+      resources:
+        limits:
+          memory: ${NODE_MVIDEO_MEM_LIMIT:-4g}
+        reservations:
+          memory: 1G
+
+  # ---------- Level-2 embedding/near-match dedup → heavy image (torch) ----------
+  # Без Chrome, но с torch/sentence-transformers. В .env узла обязательно:
+  #   DEDUP_EMBEDDING_ENABLED=1  DEDUP_EMBEDDING_MATCH_ENABLED=1  DEDUP_L2_SWEEP_ENABLED=1
+  node-dedup:
+    profiles: ["node-dedup"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.celery
+    container_name: pm_node_dedup
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      celery -A config worker --loglevel=info --pool=prefork
+      --concurrency=${NODE_DEDUP_CONCURRENCY:-1}
+      -Q dedup_l2
+      --max-tasks-per-child=${NODE_DEDUP_MAX_TASKS_PER_CHILD:-4}
+      --time-limit=${NODE_DEDUP_TIME_LIMIT:-3600}
+      --soft-time-limit=${NODE_DEDUP_SOFT_TIME_LIMIT:-3540}
+      --hostname=dedup@%h
+    volumes:
+      - .:/app
+      # HF-кэш модели эмбеддингов (офлайн-флаги в .env запрещают докачку в контейнере).
+      - ${HF_HOME_DIR:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
+    deploy:
+      resources:
+        limits:
+          memory: ${NODE_DEDUP_MEM_LIMIT:-3g}
+        reservations:
+          memory: 1G

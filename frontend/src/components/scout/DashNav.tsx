@@ -55,6 +55,15 @@ export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout, onOpenN
           <span className="hidden sm:inline">найти товар</span>
         </button>
 
+        {!user ? (
+          <Link
+            to="/login"
+            className="px-4 h-9 rounded-scout border border-scout-subtle text-[13px] font-medium text-scout-text hover:border-scout-accent/50 hover:bg-scout-subtle transition-colors flex items-center"
+          >
+            войти
+          </Link>
+        ) : (
+        <>
         <button
           onClick={() => navigate('/notifications')}
           className="relative w-9 h-9 rounded-scout bg-transparent border border-scout-subtle text-scout-muted hover:bg-scout-subtle hover:text-scout-text transition-colors flex items-center justify-center"
@@ -96,6 +105,8 @@ export function DashNav({ user, unreadCount = 0, onAddProduct, onLogout, onOpenN
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </header>
   )

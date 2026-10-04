@@ -763,3 +763,183 @@ def task_parse_all_categories() -> dict:
         pause,
     )
     return {'queued': count, 'stagger': True, 'pause_seconds': pause}
+
+
+@shared_task(bind=True, acks_late=True)
+def task_l2_dedup_sweep(self, lookback_hours: int | None = None, limit: int | None = None) -> dict:
+    """Level-2 dedup node task (queue=dedup_l2, torch-образ).
+
+    Парсинг-узлы лёгкие (без torch): embedding-матчинг при инжесте у них пропущен.
+    Этот таск выносит тяжёлую часть на отдельный VPS и поддерживает векторное
+    состояние, на которое опирается near-match дедуп:
+
+      1. Добивает match_embedding товарам без вектора (idempotent, безопасно),
+         в первую очередь недавно обновлённым.
+
+    Шаг 2 (опц., DEDUP_L2_MERGE_ENABLED): near-match merge. Для недавно
+    обновлённых товаров с готовым эмбеддингом ищет ближайший по вектору товар того
+    же бренда/категории и при sim>=auto_threshold (и чистых гардах) AUTO-сливает,
+    а в полосе [review,auto) или при same-source overlap кладёт в REVIEW-очередь.
+    Все слияния — под magnet-guard, same-source-guard и specs-guard (см. matcher).
+    Чинит under-merge, который tier-1 пропускает из-за мусорного MPN.
+    """
+    from apps.products.dedupe.embedding import embedding_enabled, sync_product_embedding
+    from apps.products.dedupe.normalizer import normalize_offer
+
+    if not getattr(settings, 'DEDUP_L2_SWEEP_ENABLED', False):
+        return {'status': 'disabled'}
+    if not embedding_enabled():
+        logger.warning('task_l2_dedup_sweep: embeddings недоступны (нет torch / DEDUP_EMBEDDING_ENABLED=0)')
+        return {'status': 'skipped', 'reason': 'embeddings_unavailable'}
+
+    hours = int(lookback_hours if lookback_hours is not None
+                else getattr(settings, 'DEDUP_L2_LOOKBACK_HOURS', 24))
+    batch_limit = int(limit if limit is not None
+                      else getattr(settings, 'DEDUP_L2_BATCH_LIMIT', 500))
+    since = timezone.now() - timedelta(hours=hours)
+
+    qs = (
+        Product.objects.filter(is_active=True, match_embedding__isnull=True)
+        .filter(updated_at__gte=since)
+        .order_by('-updated_at')
+    )
+    if batch_limit > 0:
+        qs = qs[:batch_limit]
+
+    backfilled = 0
+    skipped = 0
+    for product in qs.iterator(chunk_size=100):
+        offer = (
+            Offer.objects.filter(product=product)
+            .order_by('-last_seen_at')
+            .first()
+        )
+        name = (offer.raw_name if offer else '') or product.name
+        src = offer.source if offer else 'dns'
+        sku = (offer.source_sku if offer else '') or product.vendor_code
+        url = (offer.url if offer else '') or product.url
+        features = normalize_offer(
+            name=name, source=src, category_id=product.category_id, sku=sku, url=url,
+        )
+        if sync_product_embedding(product, features, name):
+            backfilled += 1
+        else:
+            skipped += 1
+
+    logger.info(
+        'task_l2_dedup_sweep: эмбеддинги добиты=%d, пропущено=%d (lookback=%dч, limit=%d)',
+        backfilled, skipped, hours, batch_limit,
+    )
+
+    result = {
+        'status': 'ok',
+        'embeddings_backfilled': backfilled,
+        'skipped': skipped,
+        'lookback_hours': hours,
+        'limit': batch_limit,
+    }
+
+    if getattr(settings, 'DEDUP_L2_MERGE_ENABLED', False):
+        merge_limit = int(getattr(settings, 'DEDUP_L2_MERGE_LIMIT', 200))
+        result['merge'] = run_l2_merge_pass(
+            lookback_hours=hours, limit=merge_limit, dry_run=False,
+        )
+
+    return result
+
+
+def run_l2_merge_pass(
+    *, lookback_hours: int, limit: int, dry_run: bool = True,
+) -> dict:
+    """L2 near-match merge-проход по недавно обновлённым товарам с эмбеддингом.
+
+    Возвращает статистику; при dry_run=True ничего не пишет, только считает решения
+    (для валидации командой перед включением периодического шага).
+    """
+    from apps.products.dedupe.matcher import l2_decide_merge
+    from apps.products.dedupe.merge import merge_products
+    from apps.products.dedupe.audit import enqueue_review
+    from apps.products.models import MergeAuditLog
+
+    since = timezone.now() - timedelta(hours=lookback_hours)
+    qs = (
+        Product.objects.filter(is_active=True, match_embedding__isnull=False)
+        .filter(updated_at__gte=since)
+        .order_by('-updated_at')
+    )
+    if limit > 0:
+        qs = qs[:limit]
+
+    stats = {
+        'dry_run': dry_run, 'evaluated': 0,
+        'auto_merged': 0, 'review_enqueued': 0, 'skipped': 0, 'no_candidate': 0,
+        'samples': [],
+    }
+    handled_pairs: set[frozenset[int]] = set()
+    gone: set[int] = set()  # pk, удалённые как dup в этом проходе
+
+    for product in list(qs):
+        if product.pk in gone:
+            continue
+        stats['evaluated'] += 1
+        decision = l2_decide_merge(product)
+        if decision is None:
+            stats['no_candidate'] += 1
+            continue
+
+        pair = frozenset({decision['canonical_id'], decision['dup_id']})
+        if pair in handled_pairs:
+            continue
+        handled_pairs.add(pair)
+
+        if len(stats['samples']) < 25:
+            stats['samples'].append(decision)
+
+        if decision['decision'] == 'skip':
+            stats['skipped'] += 1
+            continue
+
+        if decision['decision'] == 'auto_merge':
+            if dry_run:
+                stats['auto_merged'] += 1
+                continue
+            res = merge_products(
+                decision['canonical_id'], decision['dup_id'],
+                actor=MergeAuditLog.Actor.AUTO,
+                decision=MergeAuditLog.Decision.AUTO_MERGE,
+                score=float(decision['similarity']),
+                signals={'rule': 'l2_embedding', 'reason': decision['reason']},
+            )
+            if res.get('merged'):
+                stats['auto_merged'] += 1
+                gone.add(decision['dup_id'])
+            else:
+                # can_merge отклонил (напр. same_source_overlap, замеченный гонкой) → review
+                stats['skipped'] += 1
+            continue
+
+        # decision == 'review'
+        if dry_run:
+            stats['review_enqueued'] += 1
+            continue
+        dup_offer = (
+            Offer.objects.filter(product_id=decision['dup_id'])
+            .order_by('-last_seen_at').first()
+        )
+        if dup_offer is not None:
+            from apps.products.models import Product as _P
+            suggested = _P.objects.filter(pk=decision['canonical_id']).first()
+            if suggested is not None:
+                enqueue_review(
+                    offer=dup_offer, suggested=suggested,
+                    score=float(decision['similarity']),
+                    signals={'rule': 'l2_embedding', 'reason': decision['reason']},
+                )
+                stats['review_enqueued'] += 1
+
+    logger.info(
+        'run_l2_merge_pass: dry_run=%s evaluated=%d auto=%d review=%d skip=%d',
+        dry_run, stats['evaluated'], stats['auto_merged'],
+        stats['review_enqueued'], stats['skipped'],
+    )
+    return stats

@@ -69,7 +69,7 @@ export default function ResetPassword() {
         <div className="mb-8">
           <div className="scout-caption mb-3">scout</div>
           <h1 className="font-display text-[44px] font-bold lowercase leading-[0.95] tracking-[-0.03em] text-scout-text">
-            new password.
+            новый пароль.
           </h1>
           <p className="mt-3 text-sm text-scout-muted">задай новый пароль для входа.</p>
         </div>

@@ -206,16 +206,41 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIP
 # Лёгкие HTTP-парсеры (WB, Regard) и быстрые задачи идут отдельно и могут
 # выполняться параллельно без риска для памяти.
 CELERY_TASK_DEFAULT_QUEUE = 'default'
+# --- Per-source очереди для распределённого мульти-VPS деплоя ---
+# Каждый источник имеет СВОЮ очередь, чтобы его воркер можно было вынести на
+# отдельный VPS (отдельный IP — главный смысл изоляции для антибот-WAF).
+# На одном центральном боксе один воркер просто слушает несколько очередей
+# (-Q parsing_dns,parsing_wb,...). При сплите каждый узел слушает только свою.
+#   parsing_dns       — DNS (HTTP/Qrator-solver, без Chrome)  → light image
+#   parsing_wb        — Wildberries (HTTP)                     → light image
+#   parsing_citilink  — Citilink (Selenium+Chrome)            → heavy image
+#   parsing_mvideo    — М.Видео (Selenium+Chrome+WAF)          → heavy image
+#   dedup_l2          — level-2 embedding/near-match дедуп     → torch image
+# parsing_light/parsing_heavy сохранены для обратной совместимости (regard/ozon
+# и одно-боксовый дев-режим).
 CELERY_TASK_ROUTES = {
-    # DNS теперь чистый HTTP (Qrator-солвер, без Chrome) → лёгкая очередь.
-    # Selenium-фоллбэк у DNS остаётся, но он не задействуется на лёгком воркере.
-    'apps.prices.tasks.task_parse_category': {'queue': 'parsing_light'},         # DNS (HTTP/solver)
-    'apps.prices.tasks.task_parse_citilink_category': {'queue': 'parsing_heavy'},
-    'apps.prices.tasks.task_parse_ozon_category': {'queue': 'parsing_heavy'},
-    'apps.prices.tasks.task_parse_mvideo_category': {'queue': 'parsing_heavy'},  # Chrome+WAF
-    'apps.prices.tasks.task_parse_wb_category': {'queue': 'parsing_light'},      # HTTP
+    'apps.prices.tasks.task_parse_category': {'queue': 'parsing_dns'},           # DNS (HTTP/solver)
+    'apps.prices.tasks.task_parse_wb_category': {'queue': 'parsing_wb'},         # HTTP
+    'apps.prices.tasks.task_parse_citilink_category': {'queue': 'parsing_citilink'},
+    'apps.prices.tasks.task_parse_mvideo_category': {'queue': 'parsing_mvideo'}, # Chrome+WAF
+    'apps.prices.tasks.task_parse_ozon_category': {'queue': 'parsing_heavy'},    # off-limits, heavy
     'apps.prices.tasks.task_parse_regard_category': {'queue': 'parsing_light'},  # HTTP
+    'apps.prices.tasks.task_l2_dedup_sweep': {'queue': 'dedup_l2'},
 }
+
+# --- Level-2 dedup node ---
+# Узел с torch/sentence-transformers, который периодически: (1) добивает
+# match_embedding товарам без вектора; (2) пере-матчит недавние офферы с
+# decision='new' через find_master (теперь у него есть эмбеддинги и magnet-guard),
+# наполняя REVIEW-очередь. AUTO остаётся под magnet-guard'ом и same-source-guard'ом.
+DEDUP_L2_SWEEP_ENABLED = os.getenv('DEDUP_L2_SWEEP_ENABLED', '0') == '1'
+DEDUP_L2_LOOKBACK_HOURS = int(os.getenv('DEDUP_L2_LOOKBACK_HOURS', '24'))
+DEDUP_L2_BATCH_LIMIT = int(os.getenv('DEDUP_L2_BATCH_LIMIT', '500'))
+# L2 near-match merge-шаг (после backfill эмбеддингов): off по умолчанию, включается
+# только на dedup-узле (node3). Сливает товары-near-match'и одного бренда/категории
+# по косинусу эмбеддингов под теми же гардами (magnet/same-source/specs).
+DEDUP_L2_MERGE_ENABLED = os.getenv('DEDUP_L2_MERGE_ENABLED', '0') == '1'
+DEDUP_L2_MERGE_LIMIT = int(os.getenv('DEDUP_L2_MERGE_LIMIT', '200'))
 
 
 MERGE_AUDIT_RETENTION_DAYS = int(os.getenv('MERGE_AUDIT_RETENTION_DAYS', '90'))
@@ -407,6 +432,11 @@ DEDUP_CROSS_SOURCE_SPECS_MIN_MATCHED = int(os.getenv('DEDUP_CROSS_SOURCE_SPECS_M
 # Blocking v2: расширенный candidate-pool только для REVIEW/SHADOW контуров.
 # Живой AUTO-путь не расширяем, пока нет golden-set и стабильных метрик.
 DEDUP_BLOCKING_V2_ENABLED = os.getenv('DEDUP_BLOCKING_V2_ENABLED', '0') == '1'
+
+# Over-merge magnet guard: запрещаем AUTO-merge в канонический товар, который уже
+# охватывает >= N непересекающихся групп model-token'ов (товар-"сток").
+# См. memory project_overmerge_magnets (canary FMR ~0.32 из-за магнитов).
+DEDUP_MAGNET_GROUP_THRESHOLD = int(os.getenv('DEDUP_MAGNET_GROUP_THRESHOLD', '6'))
 
 
 DEDUP_EMBEDDING_ENABLED = os.getenv('DEDUP_EMBEDDING_ENABLED', '1') == '1'
